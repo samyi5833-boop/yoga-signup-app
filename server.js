@@ -56,13 +56,25 @@ function isClassDay(dateStr, config) {
   }
   return false;
 }
+// 신청 오픈/마감 시각 (한국시간 기준). 요가 수업이 오전 11시 40분 시작이라, 그 전에 마감.
+const OPEN_HOUR = 9;
+const CLOSE_HOUR = 12;
+
 // 해당 날짜, 한국시간 오전 9시에 해당하는 절대시각
 function openTime(dateStr) {
-  return new Date(kstMidnight(dateStr).getTime() + 9 * 60 * 60 * 1000);
+  return new Date(kstMidnight(dateStr).getTime() + OPEN_HOUR * 60 * 60 * 1000);
+}
+// 해당 날짜, 한국시간 오후 12시(정오)에 해당하는 절대시각
+function closeTime(dateStr) {
+  return new Date(kstMidnight(dateStr).getTime() + CLOSE_HOUR * 60 * 60 * 1000);
 }
 function isLocked(dateStr, config) {
   if (config.testMode) return false;
   return Date.now() < openTime(dateStr).getTime();
+}
+function isClosed(dateStr, config) {
+  if (config.testMode) return false;
+  return Date.now() >= closeTime(dateStr).getTime();
 }
 
 // 앞으로 7일 안의 월/수/격주금 날짜 중, 아직 없고("existing") 관리자가 일부러 지운 적도 없는("skipped")
@@ -105,7 +117,9 @@ app.get('/api/state', async (req, res) => {
         biweeklyFridayRef: config.biweeklyFridayRef,
         testMode: config.testMode,
         autoGenerate: config.autoGenerate !== false,
-        hasPin: !!config.adminPinHash
+        hasPin: !!config.adminPinHash,
+        openHour: OPEN_HOUR,
+        closeHour: CLOSE_HOUR
       },
       serverNow: new Date().toISOString()
     });
@@ -219,7 +233,10 @@ app.post('/api/sessions/:date/join', async (req, res) => {
 
   const config = await storage.getConfig();
   if (isLocked(date, config)) {
-    return res.status(403).json({ error: '아직 신청 오픈 전이에요 (해당 수업일 오전 9시부터 가능).' });
+    return res.status(403).json({ error: `아직 신청 오픈 전이에요 (해당 수업일 오전 ${OPEN_HOUR}시부터 가능).` });
+  }
+  if (isClosed(date, config)) {
+    return res.status(403).json({ error: `신청이 마감됐어요 (${CLOSE_HOUR === 12 ? '정오(낮 12시)' : `오후 ${CLOSE_HOUR - 12}시`}에 마감).` });
   }
   const sessions = await storage.getSessions();
   const s = sessions.find(x => x.date === date);
