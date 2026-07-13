@@ -40,6 +40,7 @@ h1{
 .status.open{color:var(--accent-dark);font-weight:600;}
 .status.locked{color:var(--accent-warm);font-weight:600;}
 .status.full{color:var(--danger);font-weight:600;}
+.status.closed{color:var(--ink-soft);font-weight:600;}
 .mats{display:grid;grid-template-columns:repeat(14,1fr);gap:4px;margin:14px 0 16px;}
 .mat{height:8px;border-radius:3px;background:var(--mat-empty);transition:background .25s;}
 .mat.filled{background:var(--mat-filled);}
@@ -63,6 +64,7 @@ h1{
 .join-row button.waitlist{background:var(--accent-warm);}
 .field-error{color:var(--danger);font-size:12px;margin:6px 2px 0;min-height:14px;}
 .locked-msg{font-size:13px;color:var(--accent-warm);background:#FBF1E6;padding:10px 12px;border-radius:9px;margin-top:14px;}
+.closed-msg{font-size:13px;color:var(--ink-soft);background:var(--bg);padding:10px 12px;border-radius:9px;margin-top:14px;}
 .admin-bar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
 .admin-status{font-size:12px;color:var(--ink-soft);font-weight:500;}
 .top-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
@@ -119,10 +121,12 @@ h1{
 .cal-count.count-open{color:var(--accent-dark);}
 .cal-count.count-locked{color:var(--accent-warm);}
 .cal-count.count-full{color:var(--danger);}
+.cal-count.count-closed{color:var(--ink-soft);}
 .cal-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-top:2px;}
 .cal-dot.dot-open{background:var(--accent);}
 .cal-dot.dot-locked{background:var(--accent-warm);}
 .cal-dot.dot-full{background:var(--danger);}
+.cal-dot.dot-closed{background:var(--ink-soft);}
 .calendar-legend{display:flex;gap:14px;justify-content:center;margin-top:10px;font-size:11px;color:var(--ink-soft);flex-wrap:wrap;}
 .calendar-legend span{display:inline-flex;align-items:center;gap:5px;}
 

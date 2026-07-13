@@ -1,6 +1,6 @@
 const DOW = ['일','월','화','수','목','금','토'];
 let sessions = [];
-let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false };
+let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false, openHour: 9, closeHour: 12 };
 let showHistory = false;
 let showCandidates = false;
 let settingsOpen = false;
@@ -43,10 +43,15 @@ function fmt(d){
 }
 function parseLocal(str){ const [y,m,d]=str.split('-').map(Number); return new Date(y,m-1,d); }
 function dayLabel(dateStr){ return DOW[parseLocal(dateStr).getDay()]; }
-function openTime(dateStr){ const d=parseLocal(dateStr); d.setHours(9,0,0,0); return d; }
+function openTime(dateStr){ const d=parseLocal(dateStr); d.setHours(config.openHour ?? 9, 0, 0, 0); return d; }
+function closeTime(dateStr){ const d=parseLocal(dateStr); d.setHours(config.closeHour ?? 12, 0, 0, 0); return d; }
 function isLocked(dateStr){
   if(config.testMode) return false;
   return new Date() < openTime(dateStr);
+}
+function isClosed(dateStr){
+  if(config.testMode) return false;
+  return new Date() >= closeTime(dateStr);
 }
 function escapeHtml(str){
   return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -248,7 +253,8 @@ function renderCalendar(){
     if(s){
       const full = s.signups.length >= 14;
       const locked = isLocked(dateStr);
-      countClass = locked ? 'count-locked' : (full ? 'count-full' : 'count-open');
+      const closed = !locked && isClosed(dateStr);
+      countClass = locked ? 'count-locked' : (closed ? 'count-closed' : (full ? 'count-full' : 'count-open'));
       countLabel = `${s.signups.length}/14`;
     }
     const isToday = dateStr === today;
@@ -273,7 +279,8 @@ function renderCalendar(){
       <div class="calendar-legend">
         <span><span class="cal-dot dot-open"></span>신청 가능</span>
         <span><span class="cal-dot dot-locked"></span>오픈 전</span>
-        <span><span class="cal-dot dot-full"></span>마감</span>
+        <span><span class="cal-dot dot-full"></span>정원마감</span>
+        <span><span class="cal-dot dot-closed"></span>시간마감</span>
       </div>
     </div>`;
 
@@ -319,9 +326,11 @@ function renderCandidates(){
 
 function sessionCard(s){
   const locked = isLocked(s.date);
+  const closed = !locked && isClosed(s.date);
   const full = s.signups.length >= 14;
   let statusLabel, statusClass;
-  if(locked){ statusLabel = '오전 9시부터 신청 오픈'; statusClass='locked'; }
+  if(locked){ statusLabel = `오전 ${config.openHour ?? 9}시부터 신청 오픈`; statusClass='locked'; }
+  else if(closed){ statusLabel = '신청 마감'; statusClass='closed'; }
   else if(full){ statusLabel = '정원 마감 · 대기 접수 중'; statusClass='full'; }
   else { statusLabel = `신청 가능 · ${14-s.signups.length}자리 남음`; statusClass='open'; }
 
@@ -374,7 +383,9 @@ function sessionCard(s){
     ${signupsHtml}
     ${s.waitlist.length ? `<div class="list-label">대기</div>${waitHtml}` : ''}
     ${locked
-      ? `<div class="locked-msg">이 수업은 ${s.date} 오전 9시부터 신청할 수 있어요.</div>`
+      ? `<div class="locked-msg">이 수업은 ${s.date} 오전 ${config.openHour ?? 9}시부터 신청할 수 있어요.</div>`
+      : closed
+      ? `<div class="closed-msg">신청이 마감됐어요 (${(config.closeHour ?? 12) === 12 ? '정오(낮 12시)' : `오후 ${(config.closeHour ?? 12) - 12}시`}에 마감).</div>`
       : `<div class="join-row">
           <input type="text" placeholder="이름을 입력하세요" data-input="${s.date}">
           <button class="${full ? 'waitlist' : ''}" data-join="${s.date}">${joinBtnLabel}</button>
