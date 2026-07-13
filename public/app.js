@@ -9,6 +9,7 @@ let pendingCancel = null;
 let pendingDeleteSession = null; // 삭제 확인 대기 중인 세션 날짜
 let candidates = [];
 let connError = null;
+let calendarMonth = null; // 'YYYY-MM', 초기 렌더 때 오늘 기준으로 채움
 
 function token(){ return localStorage.getItem('yoga_admin_token'); }
 function authHeaders(){
@@ -208,6 +209,84 @@ function renderConnError(){
     ? `<div class="conn-error">${connError}</div>` : '';
 }
 
+function shiftMonth(monthStr, delta){
+  const [y,m] = monthStr.split('-').map(Number);
+  const d = new Date(y, m-1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+function renderCalendar(){
+  if(!calendarMonth) calendarMonth = todayStr().slice(0,7);
+  const [year, monthNum] = calendarMonth.split('-').map(Number);
+  const today = todayStr();
+
+  const firstDow = new Date(year, monthNum-1, 1).getDay();
+  const daysInMonth = new Date(year, monthNum, 0).getDate();
+
+  const sessionByDate = {};
+  sessions.forEach(s => { sessionByDate[s.date] = s; });
+
+  let cells = '';
+  for(let i=0; i<firstDow; i++){
+    cells += `<div class="cal-cell empty"></div>`;
+  }
+  for(let day=1; day<=daysInMonth; day++){
+    const dateStr = `${year}-${String(monthNum).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const s = sessionByDate[dateStr];
+    let dotClass = '';
+    if(s){
+      const full = s.signups.length >= 14;
+      const locked = isLocked(dateStr);
+      dotClass = locked ? 'dot-locked' : (full ? 'dot-full' : 'dot-open');
+    }
+    const isToday = dateStr === today;
+    cells += `<div class="cal-cell${s ? ' has-session' : ''}${isToday ? ' today' : ''}" ${s ? `data-cal-date="${dateStr}"` : ''}>
+      <span class="cal-daynum">${day}</span>
+      ${s ? `<span class="cal-dot ${dotClass}"></span>` : ''}
+    </div>`;
+  }
+
+  const box = document.getElementById('calendarBox');
+  box.innerHTML = `
+    <div class="calendar-panel">
+      <div class="calendar-header">
+        <button class="cal-nav-btn" id="calPrevBtn" aria-label="이전 달">‹</button>
+        <span class="calendar-title">${year}년 ${monthNum}월</span>
+        <button class="cal-nav-btn" id="calNextBtn" aria-label="다음 달">›</button>
+      </div>
+      <div class="calendar-grid calendar-dow">
+        ${DOW.map(d=>`<div class="cal-dow-label">${d}</div>`).join('')}
+      </div>
+      <div class="calendar-grid">${cells}</div>
+      <div class="calendar-legend">
+        <span><span class="cal-dot dot-open"></span>신청 가능</span>
+        <span><span class="cal-dot dot-locked"></span>오픈 전</span>
+        <span><span class="cal-dot dot-full"></span>마감</span>
+      </div>
+    </div>`;
+
+  document.getElementById('calPrevBtn').addEventListener('click', ()=>{
+    calendarMonth = shiftMonth(calendarMonth, -1);
+    render();
+  });
+  document.getElementById('calNextBtn').addEventListener('click', ()=>{
+    calendarMonth = shiftMonth(calendarMonth, 1);
+    render();
+  });
+  box.querySelectorAll('[data-cal-date]').forEach(el=>{
+    el.addEventListener('click', ()=> scrollToSession(el.dataset.calDate));
+  });
+}
+
+function scrollToSession(dateStr){
+  const exists = sessions.find(s => s.date === dateStr);
+  if(!exists) return;
+  const needsHistory = dateStr < todayStr() && !showHistory;
+  if(needsHistory){ showHistory = true; render(); }
+  const el = document.querySelector(`[data-session="${dateStr}"]`);
+  if(el) el.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
 function renderCandidates(){
   const box = document.getElementById('candidatesBox');
   if(!isAdmin || !showCandidates){ box.innerHTML=''; return; }
@@ -295,6 +374,7 @@ function sessionCard(s){
 
 function render(){
   renderConnError();
+  renderCalendar();
   renderAdminUI();
   renderTestBanner();
   renderCandidates();
@@ -439,8 +519,11 @@ document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
     } else {
       resultBox.innerHTML = `
         <p class="help" style="margin-top:10px;">수업일 ${data.sessionCount}개 기준</p>
-        <ul class="namelist">
-          ${data.rows.map(r=>`<li><span class="name-text">${escapeHtml(r.name)}</span><span>${r.count}회</span></li>`).join('')}
+        <ul class="namelist stats-list">
+          ${data.rows.map(r=>`<li>
+              <div><span class="name-text">${escapeHtml(r.name)}</span><span class="stats-dates">${r.dates.map(d=>d.slice(5)).join(', ')}</span></div>
+              <span>${r.count}회</span>
+            </li>`).join('')}
         </ul>`;
       exportBtn.style.display = 'inline-block';
     }
@@ -449,8 +532,8 @@ document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
 document.getElementById('statsExportBtn').addEventListener('click', ()=>{
   if(!lastStatsRows || !lastStatsMonth) return;
   const escCsv = (v) => `"${String(v).replace(/"/g,'""')}"`;
-  const lines = [['이름','참석횟수'].map(escCsv).join(',')]
-    .concat(lastStatsRows.map(r => [r.name, r.count].map(escCsv).join(',')));
+  const lines = [['이름','참석횟수','참석날짜'].map(escCsv).join(',')]
+    .concat(lastStatsRows.map(r => [r.name, r.count, r.dates.join(', ')].map(escCsv).join(',')));
   const csv = '\uFEFF' + lines.join('\r\n'); // BOM 포함 -> 엑셀에서 한글 깨짐 방지
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
