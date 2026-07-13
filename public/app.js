@@ -1,6 +1,6 @@
 const DOW = ['일','월','화','수','목','금','토'];
 let sessions = [];
-let config = { biweeklyFridayRef: null, testMode: false, hasPin: false };
+let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false };
 let showHistory = false;
 let showCandidates = false;
 let isAdmin = !!localStorage.getItem('yoga_admin_token');
@@ -191,6 +191,7 @@ function renderAdminUI(){
   document.getElementById('adminStatus').textContent = isAdmin ? '관리자 모드' : '일반 회원 모드';
   if(!isAdmin){
     document.getElementById('settingsPanel').style.display = 'none';
+    document.getElementById('statsPanel').style.display = 'none';
     document.getElementById('candidatesBox').innerHTML = '';
   }
   renderLoginBox();
@@ -347,6 +348,7 @@ function render(){
 
   document.getElementById('refDate').value = config.biweeklyFridayRef || '';
   document.getElementById('testModeToggle').checked = !!config.testMode;
+  document.getElementById('autoGenToggle').checked = config.autoGenerate !== false;
   document.getElementById('historyToggle').textContent = showHistory ? '지난 수업 숨기기' : '지난 수업 기록 보기';
 }
 
@@ -400,6 +402,65 @@ document.getElementById('testModeToggle').addEventListener('change', async (e)=>
     await api('/config/test-mode', { method:'POST', body: JSON.stringify({ enabled: e.target.checked }) });
     await refreshState();
   }catch(err){ e.target.checked = !e.target.checked; }
+});
+document.getElementById('autoGenToggle').addEventListener('change', async (e)=>{
+  if(!isAdmin){ e.target.checked = true; return; }
+  try{
+    await api('/config/auto-generate', { method:'POST', body: JSON.stringify({ enabled: e.target.checked }) });
+    await refreshState();
+  }catch(err){ e.target.checked = !e.target.checked; }
+});
+document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
+  if(!isAdmin) return;
+  const panel = document.getElementById('statsPanel');
+  const willShow = panel.style.display === 'none';
+  panel.style.display = willShow ? 'block' : 'none';
+  if(willShow && !document.getElementById('statsMonth').value){
+    document.getElementById('statsMonth').value = todayStr().slice(0,7);
+  }
+});
+let lastStatsRows = null;
+let lastStatsMonth = null;
+document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
+  if(!isAdmin) return;
+  const month = document.getElementById('statsMonth').value;
+  const err = document.getElementById('statsError');
+  const resultBox = document.getElementById('statsResult');
+  const exportBtn = document.getElementById('statsExportBtn');
+  err.textContent = '';
+  if(!month){ err.textContent = '월을 선택해주세요.'; return; }
+  try{
+    const data = await api(`/stats?month=${month}`);
+    lastStatsRows = data.rows;
+    lastStatsMonth = data.month;
+    if(data.rows.length === 0){
+      resultBox.innerHTML = `<p class="empty-note">${month}에는 참석 기록이 없어요 (수업일 ${data.sessionCount}개).</p>`;
+      exportBtn.style.display = 'none';
+    } else {
+      resultBox.innerHTML = `
+        <p class="help" style="margin-top:10px;">수업일 ${data.sessionCount}개 기준</p>
+        <ul class="namelist">
+          ${data.rows.map(r=>`<li><span class="name-text">${escapeHtml(r.name)}</span><span>${r.count}회</span></li>`).join('')}
+        </ul>`;
+      exportBtn.style.display = 'inline-block';
+    }
+  }catch(e){ err.textContent = e.message; resultBox.innerHTML=''; exportBtn.style.display='none'; }
+});
+document.getElementById('statsExportBtn').addEventListener('click', ()=>{
+  if(!lastStatsRows || !lastStatsMonth) return;
+  const escCsv = (v) => `"${String(v).replace(/"/g,'""')}"`;
+  const lines = [['이름','참석횟수'].map(escCsv).join(',')]
+    .concat(lastStatsRows.map(r => [r.name, r.count].map(escCsv).join(',')));
+  const csv = '\uFEFF' + lines.join('\r\n'); // BOM 포함 -> 엑셀에서 한글 깨짐 방지
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `참석통계_${lastStatsMonth}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 });
 document.getElementById('historyToggle').addEventListener('click', ()=>{
   showHistory = !showHistory;

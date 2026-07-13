@@ -97,3 +97,5 @@ h1{
   cursor:pointer;
 }
 .admin-delete-btn:active{border-color:var(--danger);color:var(--danger);}
+#statsResult .namelist li{justify-content:space-between;}
+#statsResult .namelist li span:last-child{color:var(--ink-soft);font-variant-numeric:tabular-nums;font-size:13px;}
