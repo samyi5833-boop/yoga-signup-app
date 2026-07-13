@@ -233,16 +233,18 @@ function renderCalendar(){
   for(let day=1; day<=daysInMonth; day++){
     const dateStr = `${year}-${String(monthNum).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
     const s = sessionByDate[dateStr];
-    let dotClass = '';
+    let countClass = '';
+    let countLabel = '';
     if(s){
       const full = s.signups.length >= 14;
       const locked = isLocked(dateStr);
-      dotClass = locked ? 'dot-locked' : (full ? 'dot-full' : 'dot-open');
+      countClass = locked ? 'count-locked' : (full ? 'count-full' : 'count-open');
+      countLabel = `${s.signups.length}/14`;
     }
     const isToday = dateStr === today;
     cells += `<div class="cal-cell${s ? ' has-session' : ''}${isToday ? ' today' : ''}" ${s ? `data-cal-date="${dateStr}"` : ''}>
       <span class="cal-daynum">${day}</span>
-      ${s ? `<span class="cal-dot ${dotClass}"></span>` : ''}
+      ${s ? `<span class="cal-count ${countClass}">${countLabel}</span>` : ''}
     </div>`;
   }
 
@@ -501,6 +503,7 @@ document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
 });
 let lastStatsRows = null;
 let lastStatsMonth = null;
+let lastStatsSessionDates = null;
 document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
   if(!isAdmin) return;
   const month = document.getElementById('statsMonth').value;
@@ -513,27 +516,41 @@ document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
     const data = await api(`/stats?month=${month}`);
     lastStatsRows = data.rows;
     lastStatsMonth = data.month;
+    lastStatsSessionDates = data.sessionDates;
     if(data.rows.length === 0){
       resultBox.innerHTML = `<p class="empty-note">${month}에는 참석 기록이 없어요 (수업일 ${data.sessionCount}개).</p>`;
       exportBtn.style.display = 'none';
     } else {
+      const dateHeaders = data.sessionDates.map(d=>
+        `<th>${d.slice(5)}<span class="stats-th-dow">${dayLabel(d)}</span></th>`
+      ).join('');
+      const bodyRows = data.rows.map(r => `
+        <tr>
+          <td class="stats-name-cell">${escapeHtml(r.name)}</td>
+          ${data.sessionDates.map(d => `<td>${r.attended[d] ? '1' : ''}</td>`).join('')}
+          <td class="stats-total-cell">${r.count}</td>
+        </tr>`).join('');
       resultBox.innerHTML = `
         <p class="help" style="margin-top:10px;">수업일 ${data.sessionCount}개 기준</p>
-        <ul class="namelist stats-list">
-          ${data.rows.map(r=>`<li>
-              <div><span class="name-text">${escapeHtml(r.name)}</span><span class="stats-dates">${r.dates.map(d=>d.slice(5)).join(', ')}</span></div>
-              <span>${r.count}회</span>
-            </li>`).join('')}
-        </ul>`;
+        <div class="stats-table-wrap">
+          <table class="stats-table">
+            <thead><tr><th>이름</th>${dateHeaders}<th>합계</th></tr></thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+        </div>`;
       exportBtn.style.display = 'inline-block';
     }
   }catch(e){ err.textContent = e.message; resultBox.innerHTML=''; exportBtn.style.display='none'; }
 });
 document.getElementById('statsExportBtn').addEventListener('click', ()=>{
-  if(!lastStatsRows || !lastStatsMonth) return;
+  if(!lastStatsRows || !lastStatsMonth || !lastStatsSessionDates) return;
   const escCsv = (v) => `"${String(v).replace(/"/g,'""')}"`;
-  const lines = [['이름','참석횟수','참석날짜'].map(escCsv).join(',')]
-    .concat(lastStatsRows.map(r => [r.name, r.count, r.dates.join(', ')].map(escCsv).join(',')));
+  const header = ['이름', ...lastStatsSessionDates.map(d=>`${d.slice(5)}(${dayLabel(d)})`), '합계'];
+  const lines = [header.map(escCsv).join(',')]
+    .concat(lastStatsRows.map(r => {
+      const cells = [r.name, ...lastStatsSessionDates.map(d => r.attended[d] ? '1' : ''), r.count];
+      return cells.map(escCsv).join(',');
+    }));
   const csv = '\uFEFF' + lines.join('\r\n'); // BOM 포함 -> 엑셀에서 한글 깨짐 방지
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
