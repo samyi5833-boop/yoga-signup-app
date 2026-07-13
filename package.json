@@ -1,0 +1,14 @@
+{
+  "name": "yoga-signup-app",
+  "version": "1.0.0",
+  "description": "요가동호회 수업 신청 관리 앱",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "mongodb": "^7.5.0"
+  }
+}
