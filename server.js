@@ -267,19 +267,22 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: '월 형식이 올바르지 않아요 (예: 2026-07).' });
   }
   const sessions = await storage.getSessions();
-  const inMonth = sessions.filter(s => s.date.startsWith(month));
-  const data = {}; // name -> { count, dates: [] }
+  const inMonth = sessions.filter(s => s.date.startsWith(month)).sort((a, b) => a.date.localeCompare(b.date));
+  const sessionDates = inMonth.map(s => s.date);
+
+  const data = {}; // name -> { count, attended: { date: true } }
   inMonth.forEach(s => {
     s.signups.forEach(name => {
-      if (!data[name]) data[name] = { count: 0, dates: [] };
+      if (!data[name]) data[name] = { count: 0, attended: {} };
       data[name].count += 1;
-      data[name].dates.push(s.date);
+      data[name].attended[s.date] = true;
     });
   });
   const rows = Object.entries(data)
-    .map(([name, v]) => ({ name, count: v.count, dates: v.dates.sort() }))
+    .map(([name, v]) => ({ name, count: v.count, attended: v.attended }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ko'));
-  res.json({ month, sessionCount: inMonth.length, rows });
+
+  res.json({ month, sessionCount: inMonth.length, sessionDates, rows });
 });
 
 app.listen(PORT, () => {
