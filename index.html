@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>요가동호회 수업 신청</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>요가동호회 수업 신청</h1>
+  <p class="sub">회원 28명 · 회당 최대 14명 · 수업일 오전 9시부터 선착순 신청, 마감 시 자동 대기</p>
+
+  <div id="connErrorBox"></div>
+
+  <div class="admin-bar">
+    <span id="adminStatus" class="admin-status">일반 회원 모드</span>
+    <button class="chip-btn" id="adminLoginBtn">관리자 로그인</button>
+    <button class="chip-btn" id="adminLogoutBtn" style="display:none;">관리자 로그아웃</button>
+  </div>
+
+  <div id="loginBox"></div>
+
+  <div id="adminActions" class="top-actions" style="display:none;">
+    <button class="chip-btn primary" id="showCandidatesBtn">+ 다음 수업일 추가</button>
+    <button class="chip-btn" id="toggleSettingsBtn">격주 금요일 설정</button>
+    <button class="chip-btn" id="toggleStatsBtn">월별 참석 통계</button>
+  </div>
+
+  <div id="testBannerBox"></div>
+
+  <div id="settingsPanel" class="panel" style="display:none;">
+    <h3>격주 금요일 기준일 설정</h3>
+    <div class="panel-row"><label for="refDate">수업이 있는 금요일 하나를 선택하세요</label></div>
+    <div class="panel-row">
+      <input type="date" id="refDate">
+      <button id="saveRefBtn">저장</button>
+    </div>
+    <p class="field-error" id="refDateError"></p>
+    <p class="help">선택한 날짜를 기준으로 2주 간격 금요일이 자동으로 수업일 후보에 표시돼요.</p>
+
+    <h3 style="margin-top:18px;">수동으로 세션 추가</h3>
+    <div class="panel-row">
+      <input type="date" id="manualDate">
+      <button id="addManualBtn">날짜 추가</button>
+    </div>
+    <p class="field-error" id="manualDateError"></p>
+    <p class="help">요일 제한 없이 아무 날짜나 세션으로 추가할 수 있어요.</p>
+
+    <h3 style="margin-top:18px;">테스트 모드</h3>
+    <div class="panel-row">
+      <label><input type="checkbox" id="testModeToggle"> 9시 신청 잠금 무시하고 바로 신청 테스트하기</label>
+    </div>
+    <p class="help">체크하면 모든 세션의 오전 9시 잠금이 풀려요. 실제 운영 시에는 꺼두세요.</p>
+
+    <h3 style="margin-top:18px;">주 단위 자동 수업일 생성</h3>
+    <div class="panel-row">
+      <label><input type="checkbox" id="autoGenToggle"> 앞으로 7일 안의 월/수/격주금을 자동으로 채우기</label>
+    </div>
+    <p class="help">켜두면 앱을 열 때마다 다가오는 월/수/격주금 수업일이 자동으로 등록돼요 (수동 추가와 삭제는 그대로 가능). 관리자가 삭제한 날짜는 자동으로 다시 생기지 않아요.</p>
+  </div>
+
+  <div id="statsPanel" class="panel" style="display:none;">
+    <h3>월별 참석 통계</h3>
+    <div class="panel-row">
+      <input type="month" id="statsMonth">
+      <button id="statsLoadBtn">조회</button>
+      <button class="secondary" id="statsExportBtn" style="display:none;">엑셀로 내보내기(CSV)</button>
+    </div>
+    <p class="field-error" id="statsError"></p>
+    <div id="statsResult"></div>
+    <p class="help">대기로만 있었던 신청은 참석으로 집계되지 않아요. 관리자가 삭제한 수업일은 통계에서도 함께 사라져요.</p>
+  </div>
+
+  <div id="candidatesBox"></div>
+  <div id="sessionList"></div>
+
+  <div class="footer-toggle">
+    <button id="historyToggle">지난 수업 기록 보기</button>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
