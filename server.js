@@ -27,35 +27,37 @@ function requireAdmin(req, res, next) {
 }
 
 // ---------- 날짜/규칙 유틸 ----------
+// 서버가 어떤 타임존(대부분 UTC)에서 돌아가든 상관없이, 모든 계산을 "한국시간(KST=UTC+9)" 기준으로 고정한다.
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-function parseLocal(str) {
-  const [y, m, d] = str.split('-').map(Number);
-  return new Date(y, m - 1, d);
+
+function kstMidnight(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - 9 * 60 * 60 * 1000);
 }
-function fmt(d) {
-  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+function dowOf(dateStr) {
+  return new Date(kstMidnight(dateStr).getTime() + 9 * 60 * 60 * 1000).getUTCDay();
+}
+function fmtKST(nowMs) {
+  const kst = new Date(nowMs + 9 * 60 * 60 * 1000);
+  const y = kst.getUTCFullYear(), m = String(kst.getUTCMonth() + 1).padStart(2, '0'), d = String(kst.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 function isClassDay(dateStr, config) {
-  const d = parseLocal(dateStr);
-  const dow = d.getDay();
+  const dow = dowOf(dateStr);
   if (dow === 1 || dow === 3) return true;
   if (dow === 5 && config.biweeklyFridayRef) {
-    const ref = parseLocal(config.biweeklyFridayRef);
-    const diffDays = Math.round((d - ref) / (24 * 3600 * 1000));
-    const diffWeeks = diffDays / 7;
+    const diffMs = kstMidnight(dateStr).getTime() - kstMidnight(config.biweeklyFridayRef).getTime();
+    const diffWeeks = diffMs / (7 * 24 * 3600 * 1000);
     return Number.isInteger(diffWeeks) && Math.abs(Math.round(diffWeeks)) % 2 === 0;
   }
   return false;
 }
 function openTime(dateStr) {
-  const d = parseLocal(dateStr);
-  d.setHours(9, 0, 0, 0);
-  return d;
+  return new Date(kstMidnight(dateStr).getTime() + 9 * 60 * 60 * 1000);
 }
 function isLocked(dateStr, config) {
   if (config.testMode) return false;
-  return new Date() < openTime(dateStr);
+  return Date.now() < openTime(dateStr).getTime();
 }
 
 // ---------- 앱 ----------
@@ -87,10 +89,10 @@ app.get('/api/candidates', requireAdmin, async (req, res) => {
   const sessions = await storage.getSessions();
   const existing = new Set(sessions.map(s => s.date));
   const out = [];
-  const start = new Date();
+  const todayKST = fmtKST(Date.now());
+  const startMs = kstMidnight(todayKST).getTime();
   for (let i = 0; i < 21; i++) {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    const ds = fmt(d);
+    const ds = fmtKST(startMs + i * 24 * 3600 * 1000);
     if (isClassDay(ds, config) && !existing.has(ds)) out.push(ds);
   }
   res.json({ candidates: out });
@@ -124,7 +126,7 @@ app.post('/api/admin/login', async (req, res) => {
 app.post('/api/config/biweekly-ref', requireAdmin, async (req, res) => {
   const { date } = req.body;
   if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: '날짜 형식이 올바르지 않아요.' });
-  if (parseLocal(date).getDay() !== 5) return res.status(400).json({ error: '금요일을 선택해주세요.' });
+  if (dowOf(date) !== 5) return res.status(400).json({ error: '금요일을 선택해주세요.' });
   const config = await storage.getConfig();
   config.biweeklyFridayRef = date;
   await storage.saveConfig(config);
