@@ -69,6 +69,8 @@ h1{
 .chip-btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 14px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;-webkit-tap-highlight-color:transparent;}
 .chip-btn:active{border-color:var(--accent);}
 .chip-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.chip-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.chip-btn.active::before{content:'✓ ';}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:20px;}
 .panel h3{font-family:'Fraunces',serif;font-size:15.5px;margin:0 0 10px;}
 .panel-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}

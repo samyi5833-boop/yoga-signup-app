@@ -3,6 +3,8 @@ let sessions = [];
 let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false };
 let showHistory = false;
 let showCandidates = false;
+let settingsOpen = false;
+let statsOpen = false;
 let isAdmin = !!localStorage.getItem('yoga_admin_token');
 let loginMode = null;
 let pendingCancel = null;
@@ -191,10 +193,18 @@ function renderAdminUI(){
   document.getElementById('adminLogoutBtn').style.display = isAdmin ? 'inline-block' : 'none';
   document.getElementById('adminStatus').textContent = isAdmin ? '관리자 모드' : '일반 회원 모드';
   if(!isAdmin){
+    settingsOpen = false;
+    statsOpen = false;
     document.getElementById('settingsPanel').style.display = 'none';
     document.getElementById('statsPanel').style.display = 'none';
     document.getElementById('candidatesBox').innerHTML = '';
+  } else {
+    document.getElementById('settingsPanel').style.display = settingsOpen ? 'block' : 'none';
+    document.getElementById('statsPanel').style.display = statsOpen ? 'block' : 'none';
   }
+  document.getElementById('showCandidatesBtn').classList.toggle('active', isAdmin && showCandidates);
+  document.getElementById('toggleSettingsBtn').classList.toggle('active', isAdmin && settingsOpen);
+  document.getElementById('toggleStatsBtn').classList.toggle('active', isAdmin && statsOpen);
   renderLoginBox();
 }
 
@@ -452,8 +462,8 @@ document.getElementById('showCandidatesBtn').addEventListener('click', async ()=
 });
 document.getElementById('toggleSettingsBtn').addEventListener('click', ()=>{
   if(!isAdmin) return;
-  const panel = document.getElementById('settingsPanel');
-  panel.style.display = panel.style.display==='none' ? 'block' : 'none';
+  settingsOpen = !settingsOpen;
+  render();
 });
 document.getElementById('saveRefBtn').addEventListener('click', async ()=>{
   if(!isAdmin) return;
@@ -494,12 +504,11 @@ document.getElementById('autoGenToggle').addEventListener('change', async (e)=>{
 });
 document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
   if(!isAdmin) return;
-  const panel = document.getElementById('statsPanel');
-  const willShow = panel.style.display === 'none';
-  panel.style.display = willShow ? 'block' : 'none';
-  if(willShow && !document.getElementById('statsMonth').value){
+  statsOpen = !statsOpen;
+  if(statsOpen && !document.getElementById('statsMonth').value){
     document.getElementById('statsMonth').value = todayStr().slice(0,7);
   }
+  render();
 });
 let lastStatsRows = null;
 let lastStatsMonth = null;
