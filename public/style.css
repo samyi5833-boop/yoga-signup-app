@@ -65,6 +65,7 @@ h1{
 .push-opt{display:flex;align-items:center;gap:7px;margin:9px 2px 0;color:var(--ink-soft);font-size:12.5px;}
 .push-opt input{accent-color:var(--accent);}
 .push-opt input:disabled + span{opacity:.65;}
+.push-help{color:var(--ink-soft);font-size:12px;line-height:1.5;margin:5px 2px 0;}
 .field-error{color:var(--danger);font-size:12px;margin:6px 2px 0;min-height:14px;}
 .locked-msg{font-size:13px;color:var(--accent-warm);background:#FBF1E6;padding:10px 12px;border-radius:9px;margin-top:14px;}
 .closed-msg{font-size:13px;color:var(--ink-soft);background:var(--bg);padding:10px 12px;border-radius:9px;margin-top:14px;}

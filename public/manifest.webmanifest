@@ -1,0 +1,17 @@
+{
+  "name": "요가 동호회 신청",
+  "short_name": "요가 신청",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F4F6F1",
+  "theme_color": "#2F6F62",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

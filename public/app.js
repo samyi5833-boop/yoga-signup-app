@@ -11,7 +11,7 @@ let pendingCancel = null;
 let pendingDeleteSession = null; // 삭제 확인 대기 중인 세션 날짜
 let candidates = [];
 let connError = null;
-let pushState = { supported: false, enabled: false, publicKey: null };
+let pushState = { supported: false, enabled: false, publicKey: null, reason: '' };
 let calendarMonth = null; // 'YYYY-MM', 초기 렌더 때 오늘 기준으로 채움
 
 function token(){ return localStorage.getItem('yoga_admin_token'); }
@@ -67,13 +67,20 @@ function urlBase64ToUint8Array(base64String) {
 
 async function loadPushState(){
   pushState.supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-  if(!pushState.supported) return;
+  if(!pushState.supported){
+    pushState.reason = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      ? 'iPhone/iPad는 Safari에서 공유 버튼 → 홈 화면에 추가 후, 홈 화면 아이콘으로 열어야 알림을 켤 수 있어요.'
+      : '이 모바일 브라우저는 브라우저 푸시 알림을 지원하지 않아요. Chrome 또는 Edge 최신 버전에서 다시 열어보세요.';
+    return;
+  }
   try{
     const data = await api('/push/public-key');
     pushState.enabled = !!data.enabled;
     pushState.publicKey = data.publicKey;
+    pushState.reason = pushState.enabled ? '' : '서버 알림 설정이 아직 완료되지 않았어요.';
   }catch(e){
     pushState.enabled = false;
+    pushState.reason = '서버 알림 설정을 확인하지 못했어요.';
   }
 }
 
@@ -98,7 +105,7 @@ async function registerPromotionPush(date, name){
 
   await api('/push/subscribe', {
     method:'POST',
-    body: JSON.stringify({ date, name, subscription })
+    body: JSON.stringify({ date, name, subscription: subscription.toJSON ? subscription.toJSON() : subscription })
   });
   localStorage.setItem(`yoga_push_${date}_${name}`, '1');
 }
@@ -424,6 +431,11 @@ function sessionCard(s){
     : '';
   const joinBtnLabel = full ? '대기 신청' : '신청하기';
 
+  const pushAvailable = pushState.supported && pushState.enabled;
+  const pushHelpHtml = pushAvailable || !full || !pushState.reason
+    ? ''
+    : `<p class="push-help">${escapeHtml(pushState.reason)}</p>`;
+
   const isPendingDelete = pendingDeleteSession === s.date;
   const adminDeleteHtml = isAdmin
     ? (isPendingDelete
@@ -479,6 +491,15 @@ function render(){
     listEl.innerHTML = `<div class="empty-state">등록된 수업일이 없어요.${isAdmin ? "<br>위의 '다음 수업일 추가' 버튼으로 시작해보세요." : ""}</div>`;
   } else {
     listEl.innerHTML = sorted.map(sessionCard).join('');
+  }
+
+  if(pushState.reason){
+    listEl.querySelectorAll('[data-push]:disabled').forEach(input=>{
+      const label = input.closest('.push-opt');
+      if(label && !label.nextElementSibling?.classList.contains('push-help')){
+        label.insertAdjacentHTML('afterend', `<p class="push-help">${escapeHtml(pushState.reason)}</p>`);
+      }
+    });
   }
 
   listEl.querySelectorAll('[data-join]').forEach(btn=>{
