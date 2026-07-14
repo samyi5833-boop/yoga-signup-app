@@ -11,6 +11,7 @@ let pendingCancel = null;
 let pendingDeleteSession = null; // 삭제 확인 대기 중인 세션 날짜
 let candidates = [];
 let connError = null;
+let pushState = { supported: false, enabled: false, publicKey: null };
 let calendarMonth = null; // 'YYYY-MM', 초기 렌더 때 오늘 기준으로 채움
 
 function token(){ return localStorage.getItem('yoga_admin_token'); }
@@ -57,6 +58,51 @@ function escapeHtml(str){
   return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+}
+
+async function loadPushState(){
+  pushState.supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if(!pushState.supported) return;
+  try{
+    const data = await api('/push/public-key');
+    pushState.enabled = !!data.enabled;
+    pushState.publicKey = data.publicKey;
+  }catch(e){
+    pushState.enabled = false;
+  }
+}
+
+async function registerPromotionPush(date, name){
+  if(!pushState.supported) throw new Error('이 브라우저는 푸시 알림을 지원하지 않아요.');
+  if(!pushState.enabled || !pushState.publicKey) throw new Error('서버 푸시 알림 설정이 아직 완료되지 않았어요.');
+  if(Notification.permission === 'denied') throw new Error('브라우저 알림이 차단되어 있어요. 브라우저 설정에서 허용해 주세요.');
+
+  const permission = Notification.permission === 'granted'
+    ? 'granted'
+    : await Notification.requestPermission();
+  if(permission !== 'granted') throw new Error('알림 권한을 허용해야 승급 알림을 받을 수 있어요.');
+
+  const registration = await navigator.serviceWorker.register('/sw.js');
+  let subscription = await registration.pushManager.getSubscription();
+  if(!subscription){
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(pushState.publicKey)
+    });
+  }
+
+  await api('/push/subscribe', {
+    method:'POST',
+    body: JSON.stringify({ date, name, subscription })
+  });
+  localStorage.setItem(`yoga_push_${date}_${name}`, '1');
+}
+
 async function refreshState(){
   try{
     const data = await api('/state');
@@ -95,12 +141,19 @@ function alertInline(boxId, msg){
   setTimeout(()=>p.remove(), 4000);
 }
 
-async function join(dateStr, inputEl, errEl){
+async function join(dateStr, inputEl, errEl, pushEl){
   const name = inputEl.value.trim();
   errEl.textContent = '';
   if(!name){ errEl.textContent = '이름을 입력해주세요.'; return; }
   try{
     await api(`/sessions/${dateStr}/join`, { method:'POST', body: JSON.stringify({ name }) });
+    if(pushEl && pushEl.checked){
+      try{
+        await registerPromotionPush(dateStr, name);
+      }catch(pushErr){
+        errEl.textContent = pushErr.message;
+      }
+    }
     inputEl.value = '';
     await refreshState();
   }catch(e){ errEl.textContent = e.message; }
@@ -356,6 +409,19 @@ function sessionCard(s){
   const waitHtml = s.waitlist.length
     ? `<ul class="namelist">${s.waitlist.map((n,i)=>rowHtml(n,i,true)).join('')}</ul>`
     : '';
+  const cancelledHtml = Array.isArray(s.cancelled) && s.cancelled.length
+    ? `<div class="list-label">취소 내역</div>
+      <ul class="namelist cancelled-list">
+        ${s.cancelled.slice().reverse().map(item => {
+          const when = item.cancelledAt ? new Date(item.cancelledAt).toLocaleString('ko-KR') : '';
+          const fromLabel = item.from === 'waitlist' ? '대기 취소' : '신청 취소';
+          const promoted = item.promotedName ? ` · ${escapeHtml(item.promotedName)} 승급` : '';
+          return `<li><span style="display:flex;align-items:center;min-width:0;">
+            <span class="name-text">${escapeHtml(item.name)} <span class="cancel-meta">${fromLabel}${promoted}</span></span>
+          </span><span class="cancel-time">${escapeHtml(when)}</span></li>`;
+        }).join('')}
+      </ul>`
+    : '';
   const joinBtnLabel = full ? '대기 신청' : '신청하기';
 
   const isPendingDelete = pendingDeleteSession === s.date;
@@ -381,6 +447,7 @@ function sessionCard(s){
     <div class="mats">${matsHtml}</div>
     <div class="list-label">신청 (${s.signups.length}/14)</div>
     ${signupsHtml}
+    ${cancelledHtml}
     ${s.waitlist.length ? `<div class="list-label">대기</div>${waitHtml}` : ''}
     ${locked
       ? `<div class="locked-msg">이 수업은 ${s.date} 오전 ${config.openHour ?? 9}시부터 신청할 수 있어요.</div>`
@@ -390,6 +457,7 @@ function sessionCard(s){
           <input type="text" placeholder="이름을 입력하세요" data-input="${s.date}">
           <button class="${full ? 'waitlist' : ''}" data-join="${s.date}">${joinBtnLabel}</button>
         </div>
+        ${full ? `<label class="push-opt"><input type="checkbox" data-push="${s.date}" ${pushState.enabled ? '' : 'disabled'}> 승급되면 브라우저 알림 받기</label>` : ''}
         <p class="field-error" data-err="${s.date}"></p>`
     }
   </div>`;
@@ -418,7 +486,8 @@ function render(){
       const date = btn.dataset.join;
       const input = listEl.querySelector(`[data-input="${date}"]`);
       const err = listEl.querySelector(`[data-err="${date}"]`);
-      join(date, input, err);
+      const push = listEl.querySelector(`[data-push="${date}"]`);
+      join(date, input, err, push);
     });
   });
   listEl.querySelectorAll('[data-input]').forEach(inp=>{
@@ -426,7 +495,8 @@ function render(){
       if(e.key==='Enter'){
         const date = inp.dataset.input;
         const err = listEl.querySelector(`[data-err="${date}"]`);
-        join(date, inp, err);
+        const push = listEl.querySelector(`[data-push="${date}"]`);
+        join(date, inp, err, push);
       }
     });
   });
@@ -587,5 +657,8 @@ document.getElementById('historyToggle').addEventListener('click', ()=>{
   render();
 });
 
-refreshState();
+(async function init(){
+  await loadPushState();
+  await refreshState();
+})();
 setInterval(refreshState, 15000); // 15초마다 다른 사람의 신청 현황 동기화
