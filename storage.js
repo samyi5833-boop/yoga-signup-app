@@ -33,6 +33,15 @@ if (MONGODB_URI) {
       const col = await getCollection();
       await col.updateOne({ _id: 'sessions' }, { $set: { value: data } }, { upsert: true });
     },
+    async getPushSubscriptions() {
+      const col = await getCollection();
+      const doc = await col.findOne({ _id: 'pushSubscriptions' });
+      return doc ? doc.value : [];
+    },
+    async savePushSubscriptions(data) {
+      const col = await getCollection();
+      await col.updateOne({ _id: 'pushSubscriptions' }, { $set: { value: data } }, { upsert: true });
+    },
     async getConfig() {
       const col = await getCollection();
       const doc = await col.findOne({ _id: 'config' });
@@ -50,14 +59,18 @@ if (MONGODB_URI) {
   const DATA_DIR = path.join(__dirname, 'data');
   const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
   const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+  const PUSH_SUBSCRIPTIONS_FILE = path.join(DATA_DIR, 'push-subscriptions.json');
 
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(SESSIONS_FILE)) fs.writeFileSync(SESSIONS_FILE, '[]');
   if (!fs.existsSync(CONFIG_FILE)) fs.writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_CONFIG, null, 2));
+  if (!fs.existsSync(PUSH_SUBSCRIPTIONS_FILE)) fs.writeFileSync(PUSH_SUBSCRIPTIONS_FILE, '[]');
 
   impl = {
     async getSessions() { return JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8')); },
     async saveSessions(data) { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2)); },
+    async getPushSubscriptions() { return JSON.parse(fs.readFileSync(PUSH_SUBSCRIPTIONS_FILE, 'utf8')); },
+    async savePushSubscriptions(data) { fs.writeFileSync(PUSH_SUBSCRIPTIONS_FILE, JSON.stringify(data, null, 2)); },
     async getConfig() { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); },
     async saveConfig(data) { fs.writeFileSync(CONFIG_FILE, JSON.stringify(data, null, 2)); }
   };

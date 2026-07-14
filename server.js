@@ -2,10 +2,21 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const crypto = require('crypto');
+const webpush = require('web-push');
 const storage = require('./storage');
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_CONFIG = { biweeklyFridayRef: null, adminPinHash: null, testMode: false, autoGenerate: true, skippedDates: [] };
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
+const PUSH_ENABLED = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+
+if (PUSH_ENABLED) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn('Browser push disabled: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable notifications.');
+}
 
 // ---------- 관리자 토큰 (메모리 저장, 서버 재시작 시 초기화) ----------
 const tokens = new Map();
@@ -89,13 +100,61 @@ function ensureUpcomingSessions(sessions, config) {
   for (let i = 0; i < 7; i++) {
     const ds = fmtKST(startMs + i * 24 * 3600 * 1000);
     if (isClassDay(ds, config) && !existing.has(ds) && !skipped.has(ds)) {
-      sessions.push({ date: ds, signups: [], waitlist: [] });
+      sessions.push({ date: ds, signups: [], waitlist: [], cancelled: [] });
       existing.add(ds);
       changed = true;
     }
   }
   if (changed) sessions.sort((a, b) => a.date.localeCompare(b.date));
   return changed;
+}
+
+function ensureSessionShape(session) {
+  if (!Array.isArray(session.signups)) session.signups = [];
+  if (!Array.isArray(session.waitlist)) session.waitlist = [];
+  if (!Array.isArray(session.cancelled)) session.cancelled = [];
+}
+
+function recordCancellation(session, name, from, promotedName = null) {
+  ensureSessionShape(session);
+  session.cancelled.push({
+    name,
+    from,
+    promotedName,
+    cancelledAt: new Date().toISOString()
+  });
+}
+
+async function sendPromotionPush(date, name) {
+  if (!PUSH_ENABLED || !name) return;
+  const subscriptions = await storage.getPushSubscriptions();
+  const matches = subscriptions.filter(item => item.date === date && item.name === name && item.subscription);
+  if (matches.length === 0) return;
+
+  const payload = JSON.stringify({
+    title: '요가 모임 신청이 확정되었습니다',
+    body: `${date} 수업 대기자에서 신청자로 승급되었어요.`,
+    url: '/'
+  });
+
+  const staleEndpoints = new Set();
+  await Promise.all(matches.map(async item => {
+    try {
+      await webpush.sendNotification(item.subscription, payload);
+    } catch (err) {
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        staleEndpoints.add(item.subscription.endpoint);
+      } else {
+        console.error('Push notification failed:', err.message || err);
+      }
+    }
+  }));
+
+  if (staleEndpoints.size > 0) {
+    await storage.savePushSubscriptions(
+      subscriptions.filter(item => !item.subscription || !staleEndpoints.has(item.subscription.endpoint))
+    );
+  }
 }
 
 // ---------- 앱 ----------
@@ -106,6 +165,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/api/state', async (req, res) => {
   try {
     let sessions = await storage.getSessions();
+    sessions.forEach(ensureSessionShape);
     const config = await storage.getConfig();
     const changed = ensureUpcomingSessions(sessions, config);
     if (changed) {
@@ -129,9 +189,38 @@ app.get('/api/state', async (req, res) => {
   }
 });
 
+app.get('/api/push/public-key', (req, res) => {
+  res.json({ enabled: PUSH_ENABLED, publicKey: PUSH_ENABLED ? VAPID_PUBLIC_KEY : null });
+});
+
+app.post('/api/push/subscribe', async (req, res) => {
+  if (!PUSH_ENABLED) {
+    return res.status(503).json({ error: '브라우저 푸시 알림이 아직 설정되지 않았어요.' });
+  }
+
+  const date = req.body.date;
+  const name = (req.body.name || '').trim();
+  const subscription = req.body.subscription;
+  if (!date || !DATE_RE.test(date) || !name || !subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: '알림 등록 정보가 올바르지 않아요.' });
+  }
+
+  const subscriptions = await storage.getPushSubscriptions();
+  const withoutSameEndpoint = subscriptions.filter(item => item.subscription && item.subscription.endpoint !== subscription.endpoint);
+  withoutSameEndpoint.push({
+    date,
+    name,
+    subscription,
+    createdAt: new Date().toISOString()
+  });
+  await storage.savePushSubscriptions(withoutSameEndpoint);
+  res.json({ ok: true });
+});
+
 app.get('/api/candidates', requireAdmin, async (req, res) => {
   const config = await storage.getConfig();
   const sessions = await storage.getSessions();
+  sessions.forEach(ensureSessionShape);
   const existing = new Set(sessions.map(s => s.date));
   const out = [];
   const todayKST = fmtKST(Date.now());
@@ -197,7 +286,7 @@ app.post('/api/sessions', requireAdmin, async (req, res) => {
   if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: '날짜 형식이 올바르지 않아요.' });
   const sessions = await storage.getSessions();
   if (sessions.find(s => s.date === date)) return res.status(400).json({ error: '이미 등록된 날짜예요.' });
-  sessions.push({ date, signups: [], waitlist: [] });
+  sessions.push({ date, signups: [], waitlist: [], cancelled: [] });
   sessions.sort((a, b) => a.date.localeCompare(b.date));
   await storage.saveSessions(sessions);
 
@@ -239,6 +328,7 @@ app.post('/api/sessions/:date/join', async (req, res) => {
     return res.status(403).json({ error: `신청이 마감됐어요 (${CLOSE_HOUR === 12 ? '정오(낮 12시)' : `오후 ${CLOSE_HOUR - 12}시`}에 마감).` });
   }
   const sessions = await storage.getSessions();
+  sessions.forEach(ensureSessionShape);
   const s = sessions.find(x => x.date === date);
   if (!s) return res.status(404).json({ error: '존재하지 않는 세션이에요.' });
 
@@ -261,17 +351,32 @@ app.post('/api/sessions/:date/cancel', async (req, res) => {
   const name = (req.body.name || '').trim();
   const fromWaitlist = !!req.body.fromWaitlist;
   const sessions = await storage.getSessions();
+  sessions.forEach(ensureSessionShape);
   const s = sessions.find(x => x.date === date);
   if (!s) return res.status(404).json({ error: '존재하지 않는 세션이에요.' });
 
   if (fromWaitlist) {
+    const before = s.waitlist.length;
     s.waitlist = s.waitlist.filter(n => n !== name);
+    if (s.waitlist.length < before) {
+      recordCancellation(s, name, 'waitlist');
+    }
   } else {
     const before = s.signups.length;
     s.signups = s.signups.filter(n => n !== name);
-    if (s.signups.length < before && s.waitlist.length > 0) {
-      s.signups.push(s.waitlist.shift());
+    let promotedName = null;
+    if (s.signups.length < before) {
+      if (s.waitlist.length > 0) {
+        promotedName = s.waitlist.shift();
+        s.signups.push(promotedName);
+      }
+      recordCancellation(s, name, 'signup', promotedName);
     }
+    await storage.saveSessions(sessions);
+    if (promotedName) {
+      await sendPromotionPush(date, promotedName);
+    }
+    return res.json({ ok: true, promotedName, sessions });
   }
   await storage.saveSessions(sessions);
   res.json({ ok: true, sessions });
@@ -284,6 +389,7 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: '월 형식이 올바르지 않아요 (예: 2026-07).' });
   }
   const sessions = await storage.getSessions();
+  sessions.forEach(ensureSessionShape);
   const inMonth = sessions.filter(s => s.date.startsWith(month)).sort((a, b) => a.date.localeCompare(b.date));
   const sessionDates = inMonth.map(s => s.date);
 
