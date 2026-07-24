@@ -88,7 +88,7 @@ function isClosed(dateStr, config) {
   return Date.now() >= closeTime(dateStr).getTime();
 }
 
-// 앞으로 7일 안의 월/수/격주금 날짜 중, 아직 없고("existing") 관리자가 일부러 지운 적도 없는("skipped")
+// 앞으로 14일 안의 월/수/격주금 날짜 중, 아직 없고("existing") 관리자가 일부러 지운 적도 없는("skipped")
 // 날짜만 골라 새 세션으로 채워 넣는다. 반환값: 세션이 하나라도 추가됐는지 여부.
 function ensureUpcomingSessions(sessions, config) {
   if (config.autoGenerate === false) return false;
@@ -97,7 +97,7 @@ function ensureUpcomingSessions(sessions, config) {
   const todayKST = fmtKST(Date.now());
   const startMs = kstMidnight(todayKST).getTime();
   let changed = false;
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 14; i++) {
     const ds = fmtKST(startMs + i * 24 * 3600 * 1000);
     if (isClassDay(ds, config) && !existing.has(ds) && !skipped.has(ds)) {
       sessions.push({ date: ds, signups: [], waitlist: [], cancelled: [] });
