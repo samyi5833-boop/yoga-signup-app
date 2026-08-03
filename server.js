@@ -11,6 +11,8 @@ const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
 const PUSH_ENABLED = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+const CLASS_REMINDER_TYPE = 'classReminder';
+const PROMOTION_PUSH_TYPE = 'promotion';
 
 if (PUSH_ENABLED) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -128,7 +130,7 @@ function recordCancellation(session, name, from, promotedName = null) {
 async function sendPromotionPush(date, name) {
   if (!PUSH_ENABLED || !name) return;
   const subscriptions = await storage.getPushSubscriptions();
-  const matches = subscriptions.filter(item => item.date === date && item.name === name && item.subscription);
+  const matches = subscriptions.filter(item => (item.type || PROMOTION_PUSH_TYPE) === PROMOTION_PUSH_TYPE && item.date === date && item.name === name && item.subscription);
   if (matches.length === 0) return;
 
   const payload = JSON.stringify({
@@ -155,6 +157,65 @@ async function sendPromotionPush(date, name) {
       subscriptions.filter(item => !item.subscription || !staleEndpoints.has(item.subscription.endpoint))
     );
   }
+}
+
+function kstParts(nowMs = Date.now()) {
+  const kst = new Date(nowMs + 9 * 60 * 60 * 1000);
+  return {
+    date: fmtKST(nowMs),
+    hour: kst.getUTCHours(),
+    minute: kst.getUTCMinutes()
+  };
+}
+
+async function sendClassReminderIfDue() {
+  if (!PUSH_ENABLED) return;
+
+  const now = kstParts();
+  if (now.hour !== OPEN_HOUR) return;
+
+  const config = await storage.getConfig();
+  const sentDates = new Set(config.sentClassReminderDates || []);
+  if (sentDates.has(now.date)) return;
+
+  const skipped = new Set(config.skippedDates || []);
+  if (skipped.has(now.date) || !isClassDay(now.date, config)) return;
+
+  const subscriptions = await storage.getPushSubscriptions();
+  const matches = subscriptions.filter(item => item.type === CLASS_REMINDER_TYPE && item.subscription);
+  if (matches.length === 0) {
+    config.sentClassReminderDates = [...sentDates, now.date];
+    await storage.saveConfig(config);
+    return;
+  }
+
+  const payload = JSON.stringify({
+    title: '요가 수업 신청이 열렸어요',
+    body: `${now.date} 수업 신청이 오전 9시에 시작됐어요.`,
+    url: '/'
+  });
+
+  const staleEndpoints = new Set();
+  await Promise.all(matches.map(async item => {
+    try {
+      await webpush.sendNotification(item.subscription, payload);
+    } catch (err) {
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        staleEndpoints.add(item.subscription.endpoint);
+      } else {
+        console.error('Class reminder push failed:', err.message || err);
+      }
+    }
+  }));
+
+  if (staleEndpoints.size > 0) {
+    await storage.savePushSubscriptions(
+      subscriptions.filter(item => !item.subscription || !staleEndpoints.has(item.subscription.endpoint))
+    );
+  }
+
+  config.sentClassReminderDates = [...sentDates, now.date].slice(-60);
+  await storage.saveConfig(config);
 }
 
 // ---------- 앱 ----------
@@ -198,16 +259,27 @@ app.post('/api/push/subscribe', async (req, res) => {
     return res.status(503).json({ error: '브라우저 푸시 알림이 아직 설정되지 않았어요.' });
   }
 
+  const type = req.body.type === CLASS_REMINDER_TYPE ? CLASS_REMINDER_TYPE : PROMOTION_PUSH_TYPE;
   const date = req.body.date;
   const name = (req.body.name || '').trim();
   const subscription = req.body.subscription;
-  if (!date || !DATE_RE.test(date) || !name || !subscription || !subscription.endpoint) {
+  if (!subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: '알림 등록 정보가 올바르지 않아요.' });
+  }
+
+  if (type === PROMOTION_PUSH_TYPE && (!date || !DATE_RE.test(date) || !name)) {
     return res.status(400).json({ error: '알림 등록 정보가 올바르지 않아요.' });
   }
 
   const subscriptions = await storage.getPushSubscriptions();
-  const withoutSameEndpoint = subscriptions.filter(item => item.subscription && item.subscription.endpoint !== subscription.endpoint);
+  const withoutSameEndpoint = subscriptions.filter(item => {
+    if (!item.subscription || item.subscription.endpoint !== subscription.endpoint) return true;
+    const itemType = item.type || PROMOTION_PUSH_TYPE;
+    if (type === CLASS_REMINDER_TYPE) return itemType !== CLASS_REMINDER_TYPE;
+    return !(itemType === PROMOTION_PUSH_TYPE && item.date === date && item.name === name);
+  });
   withoutSameEndpoint.push({
+    type,
     date,
     name,
     subscription,
@@ -215,6 +287,16 @@ app.post('/api/push/subscribe', async (req, res) => {
   });
   await storage.savePushSubscriptions(withoutSameEndpoint);
   res.json({ ok: true });
+});
+
+app.get('/api/push/class-reminder/check', async (req, res) => {
+  try {
+    await sendClassReminderIfDue();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Class reminder check failed:', err.message || err);
+    res.status(500).json({ error: '수업 신청 알림 확인에 실패했어요.' });
+  }
 });
 
 app.get('/api/candidates', requireAdmin, async (req, res) => {
@@ -407,6 +489,12 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
 
   res.json({ month, sessionCount: inMonth.length, sessionDates, rows });
 });
+
+setInterval(() => {
+  sendClassReminderIfDue().catch(err => {
+    console.error('Class reminder scheduler failed:', err.message || err);
+  });
+}, 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`요가동호회 신청 앱이 http://localhost:${PORT} 에서 실행 중입니다.`);
