@@ -110,6 +110,35 @@ async function registerPromotionPush(date, name){
   localStorage.setItem(`yoga_push_${date}_${name}`, '1');
 }
 
+async function registerClassReminderPush(){
+  if(!pushState.supported) throw new Error('이 브라우저는 푸시 알림을 지원하지 않아요.');
+  if(!pushState.enabled || !pushState.publicKey) throw new Error('서버 푸시 알림 설정이 아직 완료되지 않았어요.');
+  if(Notification.permission === 'denied') throw new Error('브라우저 알림이 차단되어 있어요. 브라우저 설정에서 허용해 주세요.');
+
+  const permission = Notification.permission === 'granted'
+    ? 'granted'
+    : await Notification.requestPermission();
+  if(permission !== 'granted') throw new Error('알림 권한을 허용해야 수업 신청 알림을 받을 수 있어요.');
+
+  const registration = await navigator.serviceWorker.register('/sw.js');
+  let subscription = await registration.pushManager.getSubscription();
+  if(!subscription){
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(pushState.publicKey)
+    });
+  }
+
+  await api('/push/subscribe', {
+    method:'POST',
+    body: JSON.stringify({
+      type: 'classReminder',
+      subscription: subscription.toJSON ? subscription.toJSON() : subscription
+    })
+  });
+  localStorage.setItem('yoga_class_reminder_push', '1');
+}
+
 async function refreshState(){
   try{
     const data = await api('/state');
@@ -282,6 +311,38 @@ function renderTestBanner(){
 function renderConnError(){
   document.getElementById('connErrorBox').innerHTML = connError
     ? `<div class="conn-error">${connError}</div>` : '';
+}
+
+function renderReminderBox(){
+  const box = document.getElementById('reminderBox');
+  if(!box) return;
+
+  const enabled = localStorage.getItem('yoga_class_reminder_push') === '1';
+  const disabled = !pushState.supported || !pushState.enabled;
+  const help = disabled && pushState.reason ? `<p class="push-help">${escapeHtml(pushState.reason)}</p>` : '';
+  box.innerHTML = `
+    <div class="reminder-panel">
+      <div>
+        <strong>수업 신청 알림</strong>
+        <span>수업일 오전 9시에 신청 시작 알림을 받을 수 있어요.</span>
+      </div>
+      <button id="classReminderBtn" ${enabled || disabled ? 'disabled' : ''}>${enabled ? '알림 켜짐' : '알림 받기'}</button>
+    </div>
+    ${help}`;
+
+  const btn = document.getElementById('classReminderBtn');
+  if(btn && !enabled && !disabled){
+    btn.addEventListener('click', async ()=>{
+      btn.disabled = true;
+      try{
+        await registerClassReminderPush();
+        renderReminderBox();
+      }catch(e){
+        btn.disabled = false;
+        box.insertAdjacentHTML('beforeend', `<p class="field-error">${escapeHtml(e.message)}</p>`);
+      }
+    });
+  }
 }
 
 function shiftMonth(monthStr, delta){
@@ -477,6 +538,7 @@ function sessionCard(s){
 
 function render(){
   renderConnError();
+  renderReminderBox();
   renderCalendar();
   renderAdminUI();
   renderTestBanner();
