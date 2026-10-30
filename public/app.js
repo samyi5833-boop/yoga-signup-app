@@ -1,10 +1,10 @@
 const DOW = ['일','월','화','수','목','금','토'];
 let sessions = [];
-let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false, openHour: 9, closeHour: 12 };
+let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false, environment: 'production', openHour: 9, closeHour: 12 };
 let showHistory = false;
 let showCandidates = false;
 let settingsOpen = false;
-let statsOpen = false;
+let activeView = 'main';
 let isAdmin = !!localStorage.getItem('yoga_admin_token');
 let loginMode = null;
 let pendingCancel = null;
@@ -13,13 +13,15 @@ let candidates = [];
 let connError = null;
 let pushState = { supported: false, enabled: false, publicKey: null, reason: '' };
 let calendarMonth = null; // 'YYYY-MM', 초기 렌더 때 오늘 기준으로 채움
+let attendanceKing = null;
 
 function token(){ return localStorage.getItem('yoga_admin_token'); }
 function authHeaders(){
   const t = token();
   return t ? { 'Authorization': 'Bearer ' + t } : {};
 }
-async function api(path, opts = {}){
+async function api(path, opts = {}, retryAfterExpiredAdmin = true){
+  const hadAdminToken = !!token();
   const res = await fetch('/api' + path, {
     ...opts,
     headers: {
@@ -31,7 +33,13 @@ async function api(path, opts = {}){
   let data = null;
   try { data = await res.json(); } catch(e){ /* no body */ }
   if(!res.ok){
-    if(res.status === 401){ isAdmin = false; localStorage.removeItem('yoga_admin_token'); }
+    if(res.status === 401 && hadAdminToken){
+      isAdmin = false;
+      localStorage.removeItem('yoga_admin_token');
+      if(retryAfterExpiredAdmin){
+        return api(path, opts, false);
+      }
+    }
     throw new Error((data && data.error) || `요청 실패 (${res.status})`);
   }
   return data;
@@ -56,6 +64,9 @@ function isClosed(dateStr){
 }
 function escapeHtml(str){
   return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function capacityFor(session){
+  return Number.isInteger(session.capacity) && session.capacity > 0 ? session.capacity : 14;
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -145,10 +156,22 @@ async function refreshState(){
     sessions = data.sessions;
     config = data.config;
     connError = null;
+    await loadAttendanceKing();
   }catch(e){
     connError = '서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.';
   }
   render();
+}
+
+async function loadAttendanceKing(){
+  const now = new Date();
+  const start = fmt(new Date(now.getFullYear(), now.getMonth(), 1));
+  const end = fmt(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  try{
+    attendanceKing = await api(`/stats?start=${start}&end=${end}`);
+  }catch(e){
+    attendanceKing = { start, end, sessionCount: 0, rows: [], error: true };
+  }
 }
 
 async function loadCandidatesIfNeeded(){
@@ -206,7 +229,12 @@ function requestCancel(date, name, fromWaitlist){
 async function confirmCancel(date, name, fromWaitlist){
   try{
     await api(`/sessions/${date}/cancel`, { method:'POST', body: JSON.stringify({ name, fromWaitlist }) });
-  }catch(e){ /* 조용히 무시, 다음 refresh에서 상태 재동기화 */ }
+  }catch(e){
+    pendingCancel = null;
+    render();
+    alertInline('sessionList', e.message);
+    return;
+  }
   pendingCancel = null;
   await refreshState();
 }
@@ -281,31 +309,88 @@ function renderLoginBox(){
   }
 }
 
+function renderViewNavigation(){
+  const views = ['main', 'stats', 'admin'];
+  views.forEach(view => {
+    const panel = document.getElementById(`${view}View`);
+    const button = document.getElementById(`view${view[0].toUpperCase()}${view.slice(1)}Btn`);
+    const active = activeView === view;
+    panel.style.display = active ? 'block' : 'none';
+    button.classList.toggle('active', active);
+    if(active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+}
+
 function renderAdminUI(){
   document.getElementById('adminActions').style.display = isAdmin ? 'flex' : 'none';
   document.getElementById('adminLoginBtn').style.display = isAdmin ? 'none' : 'inline-block';
   document.getElementById('adminLogoutBtn').style.display = isAdmin ? 'inline-block' : 'none';
   document.getElementById('adminStatus').textContent = isAdmin ? '관리자 모드' : '일반 회원 모드';
   if(!isAdmin){
+    showCandidates = false;
     settingsOpen = false;
-    statsOpen = false;
     document.getElementById('settingsPanel').style.display = 'none';
-    document.getElementById('statsPanel').style.display = 'none';
     document.getElementById('candidatesBox').innerHTML = '';
   } else {
     document.getElementById('settingsPanel').style.display = settingsOpen ? 'block' : 'none';
-    document.getElementById('statsPanel').style.display = statsOpen ? 'block' : 'none';
   }
   document.getElementById('showCandidatesBtn').classList.toggle('active', isAdmin && showCandidates);
   document.getElementById('toggleSettingsBtn').classList.toggle('active', isAdmin && settingsOpen);
-  document.getElementById('toggleStatsBtn').classList.toggle('active', isAdmin && statsOpen);
   renderLoginBox();
 }
 
+function renderAttendanceKing(){
+  const box = document.getElementById('attendanceKingBox');
+  if(!attendanceKing || attendanceKing.error){ box.innerHTML = ''; return; }
+  if(attendanceKing.rows.length === 0){
+    box.innerHTML = `<div class="attendance-king">
+      <div class="king-icon">🏆</div>
+      <div><strong>이달의 출석왕</strong><p>아직 정오 마감이 끝난 출석 기록이 없어요.</p></div>
+    </div>`;
+    return;
+  }
+  const topCount = attendanceKing.rows[0].count;
+  const leaders = attendanceKing.rows.filter(row => row.count === topCount);
+  box.innerHTML = `<div class="attendance-king">
+    <div class="king-icon">🏆</div>
+    <div>
+      <strong>이달의 출석왕</strong>
+      <div class="king-names">${leaders.map(row => `<span>${escapeHtml(row.name)}</span>`).join('')}</div>
+      <p>${topCount}회 출석 · 정오 마감 완료 수업 기준${leaders.length > 1 ? ' · 공동 1위' : ''}</p>
+    </div>
+  </div>`;
+}
+
 function renderTestBanner(){
-  document.getElementById('testBannerBox').innerHTML = config.testMode
-    ? `<div class="test-banner">🧪 테스트 모드 켜짐 — 9시 잠금이 해제되어 있어요. 실제 운영 전에 꺼주세요.</div>`
-    : '';
+  const banners = [];
+  if(config.environment === 'staging'){
+    banners.push('<div class="test-banner">🧪 STAGING 테스트 사이트 — 운영 데이터와 푸시 알림에 연결되지 않습니다.</div>');
+  }
+  if(config.testMode){
+    banners.push('<div class="test-banner">테스트 모드 켜짐 — 9시 잠금이 해제되어 있어요.</div>');
+  }
+  document.getElementById('testBannerBox').innerHTML = banners.join('');
+}
+
+async function saveSessionCapacity(date, inputEl, errEl){
+  if(!isAdmin) return;
+  errEl.textContent = '';
+  const capacity = Number(inputEl.value);
+  if(!Number.isInteger(capacity) || capacity < 1 || capacity > 100){
+    errEl.textContent = '정원은 1명부터 100명까지 정수로 입력해주세요.';
+    return;
+  }
+  try{
+    const data = await api(`/sessions/${date}/capacity`, {
+      method:'PATCH',
+      body: JSON.stringify({ capacity })
+    });
+    await refreshState();
+    if(data.promotedNames && data.promotedNames.length){
+      alertInline('sessionList', `대기자 ${data.promotedNames.join(', ')}님이 신청자로 승급됐어요.`);
+    }
+  }catch(e){ errEl.textContent = e.message; }
 }
 
 function renderConnError(){
@@ -372,11 +457,12 @@ function renderCalendar(){
     let countClass = '';
     let countLabel = '';
     if(s){
-      const full = s.signups.length >= 14;
+      const capacity = capacityFor(s);
+      const full = s.signups.length >= capacity;
       const locked = isLocked(dateStr);
       const closed = !locked && isClosed(dateStr);
       countClass = locked ? 'count-locked' : (closed ? 'count-closed' : (full ? 'count-full' : 'count-open'));
-      countLabel = `${s.signups.length}/14`;
+      countLabel = `${s.signups.length}/${capacity}`;
     }
     const isToday = dateStr === today;
     cells += `<div class="cal-cell${s ? ' has-session' : ''}${isToday ? ' today' : ''}" ${s ? `data-cal-date="${dateStr}"` : ''}>
@@ -446,22 +532,25 @@ function renderCandidates(){
 }
 
 function sessionCard(s){
+  const capacity = capacityFor(s);
   const locked = isLocked(s.date);
   const closed = !locked && isClosed(s.date);
-  const full = s.signups.length >= 14;
+  const full = s.signups.length >= capacity;
   let statusLabel, statusClass;
   if(locked){ statusLabel = `오전 ${config.openHour ?? 9}시부터 신청 오픈`; statusClass='locked'; }
   else if(closed){ statusLabel = '신청 마감'; statusClass='closed'; }
   else if(full){ statusLabel = '정원 마감 · 대기 접수 중'; statusClass='full'; }
-  else { statusLabel = `신청 가능 · ${14-s.signups.length}자리 남음`; statusClass='open'; }
+  else { statusLabel = `신청 가능 · ${capacity-s.signups.length}자리 남음`; statusClass='open'; }
 
-  const matsHtml = Array.from({length:14}).map((_,i)=>
+  const matsHtml = Array.from({length:capacity}).map((_,i)=>
     `<div class="mat ${i < s.signups.length ? 'filled' : ''}"></div>`
   ).join('');
 
   const rowHtml = (n, idx, fromWaitlist) => {
     const isPending = pendingCancel && pendingCancel.date===s.date && pendingCancel.name===n && pendingCancel.fromWaitlist===fromWaitlist;
-    const actions = isPending
+    const actions = closed
+      ? ''
+      : isPending
       ? `<button class="confirm-chip yes" data-act="confirm" data-date="${s.date}" data-name="${escapeHtml(n)}" data-wait="${fromWaitlist?1:0}">취소 확정</button>
          <button class="confirm-chip no" data-act="dismiss">아니오</button>`
       : `<button class="cancel-btn" data-act="request" data-date="${s.date}" data-name="${escapeHtml(n)}" data-wait="${fromWaitlist?1:0}">✕</button>`;
@@ -498,7 +587,16 @@ function sessionCard(s){
     : `<p class="push-help">${escapeHtml(pushState.reason)}</p>`;
 
   const isPendingDelete = pendingDeleteSession === s.date;
-  const adminDeleteHtml = isAdmin
+  const isAdminScreen = isAdmin && activeView === 'admin';
+  const capacityHtml = isAdminScreen && !closed
+    ? `<div class="capacity-row">
+        <label for="capacity-${s.date}">회당 최대 인원</label>
+        <input id="capacity-${s.date}" type="number" min="${Math.max(1, s.signups.length)}" max="100" value="${capacity}" data-capacity-input="${s.date}">
+        <button data-capacity-save="${s.date}">저장</button>
+        <span class="field-error" data-capacity-error="${s.date}"></span>
+      </div>`
+    : '';
+  const adminDeleteHtml = isAdminScreen
     ? (isPendingDelete
         ? `<div class="delete-confirm-row">
             <span class="field-error" style="margin:0;">이 수업일을 삭제할까요? 신청자·대기자 명단도 함께 사라져요.</span>
@@ -516,9 +614,10 @@ function sessionCard(s){
       <div><span class="session-date">${s.date}</span><span class="session-day">${dayLabel(s.date)}요일</span></div>
       <div class="status ${statusClass}">${statusLabel}</div>
     </div>
+    ${capacityHtml}
     ${adminDeleteHtml}
-    <div class="mats">${matsHtml}</div>
-    <div class="list-label">신청 (${s.signups.length}/14)</div>
+    <div class="mats" style="grid-template-columns:repeat(${Math.min(capacity, 20)},1fr)">${matsHtml}</div>
+    <div class="list-label">신청 (${s.signups.length}/${capacity})</div>
     ${signupsHtml}
     ${cancelledHtml}
     ${s.waitlist.length ? `<div class="list-label">대기</div>${waitHtml}` : ''}
@@ -540,6 +639,8 @@ function render(){
   renderConnError();
   renderReminderBox();
   renderCalendar();
+  renderAttendanceKing();
+  renderViewNavigation();
   renderAdminUI();
   renderTestBanner();
   renderCandidates();
@@ -554,6 +655,10 @@ function render(){
   } else {
     listEl.innerHTML = sorted.map(sessionCard).join('');
   }
+
+  const showSessionList = activeView === 'main' || (activeView === 'admin' && isAdmin);
+  listEl.style.display = showSessionList ? 'block' : 'none';
+  document.querySelector('.footer-toggle').style.display = showSessionList ? 'block' : 'none';
 
   if(pushState.reason){
     listEl.querySelectorAll('[data-push]:disabled').forEach(input=>{
@@ -601,6 +706,14 @@ function render(){
   listEl.querySelectorAll('[data-act="delete-dismiss"]').forEach(btn=>{
     btn.addEventListener('click', ()=> { pendingDeleteSession = null; render(); });
   });
+  listEl.querySelectorAll('[data-capacity-save]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const date = btn.dataset.capacitySave;
+      const input = listEl.querySelector(`[data-capacity-input="${date}"]`);
+      const err = listEl.querySelector(`[data-capacity-error="${date}"]`);
+      saveSessionCapacity(date, input, err);
+    });
+  });
 
   document.getElementById('refDate').value = config.biweeklyFridayRef || '';
   document.getElementById('testModeToggle').checked = !!config.testMode;
@@ -616,17 +729,20 @@ document.getElementById('adminLogoutBtn').addEventListener('click', ()=>{
   isAdmin = false;
   localStorage.removeItem('yoga_admin_token');
   showCandidates = false;
+  settingsOpen = false;
   render();
 });
 document.getElementById('showCandidatesBtn').addEventListener('click', async ()=>{
   if(!isAdmin) return;
   showCandidates = !showCandidates;
+  settingsOpen = false;
   await loadCandidatesIfNeeded();
   render();
 });
 document.getElementById('toggleSettingsBtn').addEventListener('click', ()=>{
   if(!isAdmin) return;
   settingsOpen = !settingsOpen;
+  showCandidates = false;
   render();
 });
 document.getElementById('saveRefBtn').addEventListener('click', async ()=>{
@@ -666,32 +782,50 @@ document.getElementById('autoGenToggle').addEventListener('change', async (e)=>{
     await refreshState();
   }catch(err){ e.target.checked = !e.target.checked; }
 });
-document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
-  if(!isAdmin) return;
-  statsOpen = !statsOpen;
-  if(statsOpen && !document.getElementById('statsMonth').value){
-    document.getElementById('statsMonth').value = todayStr().slice(0,7);
+function switchView(view){
+  activeView = view;
+  if(view !== 'admin'){
+    showCandidates = false;
+    settingsOpen = false;
+  }
+  if(view === 'stats' && !document.getElementById('statsStart').value){
+    setStatsMonth(0);
   }
   render();
-});
+}
+document.getElementById('viewMainBtn').addEventListener('click', ()=>switchView('main'));
+document.getElementById('viewStatsBtn').addEventListener('click', ()=>switchView('stats'));
+document.getElementById('viewAdminBtn').addEventListener('click', ()=>switchView('admin'));
 let lastStatsRows = null;
-let lastStatsMonth = null;
+let lastStatsStart = null;
+let lastStatsEnd = null;
 let lastStatsSessionDates = null;
+function setStatsMonth(offset){
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+  document.getElementById('statsStart').value = fmt(first);
+  document.getElementById('statsEnd').value = fmt(last);
+}
+document.getElementById('statsThisMonthBtn').addEventListener('click', ()=>setStatsMonth(0));
+document.getElementById('statsLastMonthBtn').addEventListener('click', ()=>setStatsMonth(-1));
 document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
-  if(!isAdmin) return;
-  const month = document.getElementById('statsMonth').value;
+  const start = document.getElementById('statsStart').value;
+  const end = document.getElementById('statsEnd').value;
   const err = document.getElementById('statsError');
   const resultBox = document.getElementById('statsResult');
   const exportBtn = document.getElementById('statsExportBtn');
   err.textContent = '';
-  if(!month){ err.textContent = '월을 선택해주세요.'; return; }
+  if(!start || !end){ err.textContent = '시작일과 종료일을 모두 선택해주세요.'; return; }
+  if(start > end){ err.textContent = '시작일은 종료일보다 늦을 수 없어요.'; return; }
   try{
-    const data = await api(`/stats?month=${month}`);
+    const data = await api(`/stats?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
     lastStatsRows = data.rows;
-    lastStatsMonth = data.month;
+    lastStatsStart = data.start;
+    lastStatsEnd = data.end;
     lastStatsSessionDates = data.sessionDates;
     if(data.rows.length === 0){
-      resultBox.innerHTML = `<p class="empty-note">${month}에는 참석 기록이 없어요 (수업일 ${data.sessionCount}개).</p>`;
+      resultBox.innerHTML = `<p class="empty-note">선택한 기간에는 확정된 출석 기록이 없어요 (마감 완료 수업 ${data.sessionCount}개).</p>`;
       exportBtn.style.display = 'none';
     } else {
       const dateHeaders = data.sessionDates.map(d=>
@@ -704,7 +838,7 @@ document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
           <td class="stats-total-cell">${r.count}</td>
         </tr>`).join('');
       resultBox.innerHTML = `
-        <p class="help" style="margin-top:10px;">수업일 ${data.sessionCount}개 기준</p>
+        <p class="help" style="margin-top:10px;">${data.start} ~ ${data.end} · 마감 완료 수업 ${data.sessionCount}개 기준${data.excludedOpenSessionCount ? ` · 아직 마감 전 ${data.excludedOpenSessionCount}개 제외` : ''}</p>
         <div class="stats-table-wrap">
           <table class="stats-table">
             <thead><tr><th>이름</th>${dateHeaders}<th>합계</th></tr></thead>
@@ -716,7 +850,7 @@ document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
   }catch(e){ err.textContent = e.message; resultBox.innerHTML=''; exportBtn.style.display='none'; }
 });
 document.getElementById('statsExportBtn').addEventListener('click', ()=>{
-  if(!lastStatsRows || !lastStatsMonth || !lastStatsSessionDates) return;
+  if(!lastStatsRows || !lastStatsStart || !lastStatsEnd || !lastStatsSessionDates) return;
   const escCsv = (v) => `"${String(v).replace(/"/g,'""')}"`;
   const header = ['이름', ...lastStatsSessionDates.map(d=>`${d.slice(5)}(${dayLabel(d)})`), '합계'];
   const lines = [header.map(escCsv).join(',')]
@@ -729,7 +863,7 @@ document.getElementById('statsExportBtn').addEventListener('click', ()=>{
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `참석통계_${lastStatsMonth}.csv`;
+  a.download = `출석통계_${lastStatsStart}_${lastStatsEnd}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
