@@ -19,7 +19,8 @@ function authHeaders(){
   const t = token();
   return t ? { 'Authorization': 'Bearer ' + t } : {};
 }
-async function api(path, opts = {}){
+async function api(path, opts = {}, retryAfterExpiredAdmin = true){
+  const hadAdminToken = !!token();
   const res = await fetch('/api' + path, {
     ...opts,
     headers: {
@@ -31,7 +32,14 @@ async function api(path, opts = {}){
   let data = null;
   try { data = await res.json(); } catch(e){ /* no body */ }
   if(!res.ok){
-    if(res.status === 401){ isAdmin = false; localStorage.removeItem('yoga_admin_token'); }
+    if(res.status === 401 && hadAdminToken){
+      isAdmin = false;
+      localStorage.removeItem('yoga_admin_token');
+      const method = (opts.method || 'GET').toUpperCase();
+      if(retryAfterExpiredAdmin && method === 'GET'){
+        return api(path, opts, false);
+      }
+    }
     throw new Error((data && data.error) || `요청 실패 (${res.status})`);
   }
   return data;
