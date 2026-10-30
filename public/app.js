@@ -36,8 +36,7 @@ async function api(path, opts = {}, retryAfterExpiredAdmin = true){
     if(res.status === 401 && hadAdminToken){
       isAdmin = false;
       localStorage.removeItem('yoga_admin_token');
-      const method = (opts.method || 'GET').toUpperCase();
-      if(retryAfterExpiredAdmin && method === 'GET'){
+      if(retryAfterExpiredAdmin){
         return api(path, opts, false);
       }
     }
@@ -230,7 +229,12 @@ function requestCancel(date, name, fromWaitlist){
 async function confirmCancel(date, name, fromWaitlist){
   try{
     await api(`/sessions/${date}/cancel`, { method:'POST', body: JSON.stringify({ name, fromWaitlist }) });
-  }catch(e){ /* 조용히 무시, 다음 refresh에서 상태 재동기화 */ }
+  }catch(e){
+    pendingCancel = null;
+    render();
+    alertInline('sessionList', e.message);
+    return;
+  }
   pendingCancel = null;
   await refreshState();
 }

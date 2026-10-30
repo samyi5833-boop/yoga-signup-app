@@ -173,4 +173,7 @@ test('period stats finalize at noon and per-session capacity promotes waitlist s
   assert.deepEqual((await expanded.json()).promotedNames, ['다']);
   const tooSmall = await request(`/api/sessions/${futureDate}/capacity`, { method: 'PATCH', body: JSON.stringify({ capacity: 2 }) }, admin);
   assert.equal(tooSmall.status, 409);
+  const openCancel = await request(`/api/sessions/${futureDate}/cancel`, { method: 'POST', body: JSON.stringify({ name: '가', fromWaitlist: false }) });
+  assert.equal(openCancel.status, 200);
+  assert.equal((await openCancel.json()).sessions.find(session => session.date === futureDate).signups.includes('가'), false);
 });
