@@ -79,6 +79,32 @@ h1{
 .chip-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
 .chip-btn.active::before{content:'✓ ';}
 .public-actions{margin-bottom:10px;}
+.app-nav{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:5px;
+  margin:0 0 18px;
+  padding:5px;
+  border:1px solid rgba(221,220,207,.9);
+  border-radius:18px;
+  background:rgba(255,254,248,.68);
+  box-shadow:0 7px 24px rgba(63,74,65,.05);
+}
+.app-nav-btn{
+  min-width:0;
+  border:0;
+  border-radius:13px;
+  padding:11px 7px;
+  background:transparent;
+  color:var(--ink-soft);
+  font-family:'Noto Sans KR',sans-serif;
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+}
+.app-nav-btn.active{background:var(--accent);color:#FFF;box-shadow:0 5px 14px rgba(63,93,80,.18);}
+.app-view{animation:view-in .18s ease-out;}
+@keyframes view-in{from{opacity:.4;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .attendance-king{display:flex;align-items:center;gap:13px;background:linear-gradient(135deg,#FFF8E7,#F4EFE1);border:1px solid #E8D49A;border-radius:14px;padding:14px 16px;margin-bottom:16px;}
 .king-icon{font-size:28px;line-height:1;flex-shrink:0;}
 .attendance-king strong{font-family:'Fraunces',serif;font-size:16px;color:#76551B;}
@@ -245,6 +271,8 @@ h1{
   .wellness-hero{margin-left:-12px;margin-right:-12px;padding:23px 22px 72px;border-radius:0 0 26px 26px;}
   .wellness-hero h1{font-size:29px;}
   .hero-rule{font-size:10.5px;line-height:1.6;}
+  .app-nav{gap:4px;padding:4px;border-radius:16px;}
+  .app-nav-btn{padding:10px 4px;font-size:12px;}
   .calendar-panel{padding:15px 12px;}
   .calendar-legend{gap:9px;}
   .card{padding:18px 16px;}

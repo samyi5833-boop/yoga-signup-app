@@ -4,7 +4,7 @@ let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, has
 let showHistory = false;
 let showCandidates = false;
 let settingsOpen = false;
-let statsOpen = false;
+let activeView = 'main';
 let isAdmin = !!localStorage.getItem('yoga_admin_token');
 let loginMode = null;
 let pendingCancel = null;
@@ -309,6 +309,19 @@ function renderLoginBox(){
   }
 }
 
+function renderViewNavigation(){
+  const views = ['main', 'stats', 'admin'];
+  views.forEach(view => {
+    const panel = document.getElementById(`${view}View`);
+    const button = document.getElementById(`view${view[0].toUpperCase()}${view.slice(1)}Btn`);
+    const active = activeView === view;
+    panel.style.display = active ? 'block' : 'none';
+    button.classList.toggle('active', active);
+    if(active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+}
+
 function renderAdminUI(){
   document.getElementById('adminActions').style.display = isAdmin ? 'flex' : 'none';
   document.getElementById('adminLoginBtn').style.display = isAdmin ? 'none' : 'inline-block';
@@ -322,10 +335,8 @@ function renderAdminUI(){
   } else {
     document.getElementById('settingsPanel').style.display = settingsOpen ? 'block' : 'none';
   }
-  document.getElementById('statsPanel').style.display = statsOpen ? 'block' : 'none';
   document.getElementById('showCandidatesBtn').classList.toggle('active', isAdmin && showCandidates);
   document.getElementById('toggleSettingsBtn').classList.toggle('active', isAdmin && settingsOpen);
-  document.getElementById('toggleStatsBtn').classList.toggle('active', statsOpen);
   renderLoginBox();
 }
 
@@ -576,7 +587,8 @@ function sessionCard(s){
     : `<p class="push-help">${escapeHtml(pushState.reason)}</p>`;
 
   const isPendingDelete = pendingDeleteSession === s.date;
-  const capacityHtml = isAdmin && !closed
+  const isAdminScreen = isAdmin && activeView === 'admin';
+  const capacityHtml = isAdminScreen && !closed
     ? `<div class="capacity-row">
         <label for="capacity-${s.date}">회당 최대 인원</label>
         <input id="capacity-${s.date}" type="number" min="${Math.max(1, s.signups.length)}" max="100" value="${capacity}" data-capacity-input="${s.date}">
@@ -584,7 +596,7 @@ function sessionCard(s){
         <span class="field-error" data-capacity-error="${s.date}"></span>
       </div>`
     : '';
-  const adminDeleteHtml = isAdmin
+  const adminDeleteHtml = isAdminScreen
     ? (isPendingDelete
         ? `<div class="delete-confirm-row">
             <span class="field-error" style="margin:0;">이 수업일을 삭제할까요? 신청자·대기자 명단도 함께 사라져요.</span>
@@ -628,6 +640,7 @@ function render(){
   renderReminderBox();
   renderCalendar();
   renderAttendanceKing();
+  renderViewNavigation();
   renderAdminUI();
   renderTestBanner();
   renderCandidates();
@@ -642,6 +655,10 @@ function render(){
   } else {
     listEl.innerHTML = sorted.map(sessionCard).join('');
   }
+
+  const showSessionList = activeView === 'main' || (activeView === 'admin' && isAdmin);
+  listEl.style.display = showSessionList ? 'block' : 'none';
+  document.querySelector('.footer-toggle').style.display = showSessionList ? 'block' : 'none';
 
   if(pushState.reason){
     listEl.querySelectorAll('[data-push]:disabled').forEach(input=>{
@@ -713,14 +730,12 @@ document.getElementById('adminLogoutBtn').addEventListener('click', ()=>{
   localStorage.removeItem('yoga_admin_token');
   showCandidates = false;
   settingsOpen = false;
-  statsOpen = false;
   render();
 });
 document.getElementById('showCandidatesBtn').addEventListener('click', async ()=>{
   if(!isAdmin) return;
   showCandidates = !showCandidates;
   settingsOpen = false;
-  statsOpen = false;
   await loadCandidatesIfNeeded();
   render();
 });
@@ -728,7 +743,6 @@ document.getElementById('toggleSettingsBtn').addEventListener('click', ()=>{
   if(!isAdmin) return;
   settingsOpen = !settingsOpen;
   showCandidates = false;
-  statsOpen = false;
   render();
 });
 document.getElementById('saveRefBtn').addEventListener('click', async ()=>{
@@ -768,15 +782,20 @@ document.getElementById('autoGenToggle').addEventListener('change', async (e)=>{
     await refreshState();
   }catch(err){ e.target.checked = !e.target.checked; }
 });
-document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
-  statsOpen = !statsOpen;
-  showCandidates = false;
-  settingsOpen = false;
-  if(statsOpen && !document.getElementById('statsStart').value){
+function switchView(view){
+  activeView = view;
+  if(view !== 'admin'){
+    showCandidates = false;
+    settingsOpen = false;
+  }
+  if(view === 'stats' && !document.getElementById('statsStart').value){
     setStatsMonth(0);
   }
   render();
-});
+}
+document.getElementById('viewMainBtn').addEventListener('click', ()=>switchView('main'));
+document.getElementById('viewStatsBtn').addEventListener('click', ()=>switchView('stats'));
+document.getElementById('viewAdminBtn').addEventListener('click', ()=>switchView('admin'));
 let lastStatsRows = null;
 let lastStatsStart = null;
 let lastStatsEnd = null;
