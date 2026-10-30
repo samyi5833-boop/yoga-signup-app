@@ -7,12 +7,38 @@ const storage = require('./storage');
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_CONFIG = { biweeklyFridayRef: null, adminPinHash: null, testMode: false, autoGenerate: true, skippedDates: [] };
+const APP_ENV = process.env.APP_ENV || 'production';
+const IS_PRODUCTION = APP_ENV === 'production';
+const IS_STAGING = APP_ENV === 'staging';
+const STAGING_USERNAME = process.env.STAGING_USERNAME || '';
+const STAGING_PASSWORD = process.env.STAGING_PASSWORD || '';
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
-const PUSH_ENABLED = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+const PUSH_MODE = process.env.PUSH_MODE || (IS_PRODUCTION ? 'live' : 'disabled');
+const REMINDER_SCHEDULER_REQUESTED = (process.env.REMINDER_SCHEDULER_ENABLED || (IS_PRODUCTION ? 'true' : 'false')) === 'true';
+const PUSH_ENABLED = PUSH_MODE === 'live' && !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+const REMINDER_SCHEDULER_ENABLED = REMINDER_SCHEDULER_REQUESTED && PUSH_ENABLED;
 const CLASS_REMINDER_TYPE = 'classReminder';
 const PROMOTION_PUSH_TYPE = 'promotion';
+const DEFAULT_CAPACITY = 14;
+const MAX_CAPACITY = 100;
+
+if (!['production', 'staging', 'development', 'test'].includes(APP_ENV)) {
+  throw new Error(`Unsupported APP_ENV: ${APP_ENV}`);
+}
+if (!['disabled', 'live'].includes(PUSH_MODE)) {
+  throw new Error(`Unsupported PUSH_MODE: ${PUSH_MODE}`);
+}
+if (!IS_PRODUCTION && PUSH_MODE === 'live') {
+  throw new Error('Push delivery can only be enabled in production.');
+}
+if (!IS_PRODUCTION && REMINDER_SCHEDULER_REQUESTED) {
+  throw new Error('The reminder scheduler can only be enabled in production.');
+}
+if (IS_STAGING && (!STAGING_USERNAME || !STAGING_PASSWORD)) {
+  throw new Error('Staging requires STAGING_USERNAME and STAGING_PASSWORD.');
+}
 
 if (PUSH_ENABLED) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -89,6 +115,18 @@ function isClosed(dateStr, config) {
   if (config.testMode) return false;
   return Date.now() >= closeTime(dateStr).getTime();
 }
+function isAttendanceFinalized(dateStr) {
+  return Date.now() >= closeTime(dateStr).getTime();
+}
+function isValidDateString(dateStr) {
+  if (!DATE_RE.test(dateStr || '')) return false;
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+function sessionCapacity(session) {
+  return Number.isInteger(session.capacity) && session.capacity > 0 ? session.capacity : DEFAULT_CAPACITY;
+}
 
 // 앞으로 14일 안의 월/수/격주금 날짜 중, 아직 없고("existing") 관리자가 일부러 지운 적도 없는("skipped")
 // 날짜만 골라 새 세션으로 채워 넣는다. 반환값: 세션이 하나라도 추가됐는지 여부.
@@ -102,7 +140,7 @@ function ensureUpcomingSessions(sessions, config) {
   for (let i = 0; i < 14; i++) {
     const ds = fmtKST(startMs + i * 24 * 3600 * 1000);
     if (isClassDay(ds, config) && !existing.has(ds) && !skipped.has(ds)) {
-      sessions.push({ date: ds, signups: [], waitlist: [], cancelled: [] });
+      sessions.push({ date: ds, capacity: DEFAULT_CAPACITY, signups: [], waitlist: [], cancelled: [] });
       existing.add(ds);
       changed = true;
     }
@@ -112,6 +150,7 @@ function ensureUpcomingSessions(sessions, config) {
 }
 
 function ensureSessionShape(session) {
+  if (!Number.isInteger(session.capacity) || session.capacity < 1) session.capacity = DEFAULT_CAPACITY;
   if (!Array.isArray(session.signups)) session.signups = [];
   if (!Array.isArray(session.waitlist)) session.waitlist = [];
   if (!Array.isArray(session.cancelled)) session.cancelled = [];
@@ -220,8 +259,51 @@ async function sendClassReminderIfDue() {
 
 // ---------- 앱 ----------
 const app = express();
+
+function safeTextEqual(actual, expected) {
+  const actualHash = crypto.createHash('sha256').update(actual || '', 'utf8').digest();
+  const expectedHash = crypto.createHash('sha256').update(expected || '', 'utf8').digest();
+  return crypto.timingSafeEqual(actualHash, expectedHash);
+}
+
+app.use((req, res, next) => {
+  if (!IS_STAGING) return next();
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('Bearer ')) {
+    const token = auth.slice(7);
+    const expires = tokens.get(token);
+    if (expires && expires >= Date.now()) return next();
+  }
+  const encoded = auth.startsWith('Basic ') ? auth.slice(6) : '';
+  let username = '';
+  let password = '';
+  try {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+    const separator = decoded.indexOf(':');
+    if (separator >= 0) {
+      username = decoded.slice(0, separator);
+      password = decoded.slice(separator + 1);
+    }
+  } catch (err) {
+    // Invalid credentials are handled below.
+  }
+  if (!safeTextEqual(username, STAGING_USERNAME) || !safeTextEqual(password, STAGING_PASSWORD)) {
+    res.set('WWW-Authenticate', 'Basic realm="Yoga staging", charset="UTF-8"');
+    return res.status(401).send('Staging access requires authentication.');
+  }
+  next();
+});
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/environment', (req, res) => {
+  res.json({
+    ...storage.getDiagnostics(),
+    pushMode: PUSH_MODE,
+    pushEnabled: PUSH_ENABLED,
+    reminderSchedulerEnabled: REMINDER_SCHEDULER_ENABLED
+  });
+});
 
 app.get('/api/state', async (req, res) => {
   try {
@@ -239,6 +321,7 @@ app.get('/api/state', async (req, res) => {
         testMode: config.testMode,
         autoGenerate: config.autoGenerate !== false,
         hasPin: !!config.adminPinHash,
+        environment: APP_ENV,
         openHour: OPEN_HOUR,
         closeHour: CLOSE_HOUR
       },
@@ -368,7 +451,7 @@ app.post('/api/sessions', requireAdmin, async (req, res) => {
   if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: '날짜 형식이 올바르지 않아요.' });
   const sessions = await storage.getSessions();
   if (sessions.find(s => s.date === date)) return res.status(400).json({ error: '이미 등록된 날짜예요.' });
-  sessions.push({ date, signups: [], waitlist: [], cancelled: [] });
+  sessions.push({ date, capacity: DEFAULT_CAPACITY, signups: [], waitlist: [], cancelled: [] });
   sessions.sort((a, b) => a.date.localeCompare(b.date));
   await storage.saveSessions(sessions);
 
@@ -418,7 +501,7 @@ app.post('/api/sessions/:date/join', async (req, res) => {
     return res.status(409).json({ error: `${name}님은 이미 신청/대기 명단에 있어요.` });
   }
   let waitlisted = false;
-  if (s.signups.length < 14) {
+  if (s.signups.length < sessionCapacity(s)) {
     s.signups.push(name);
   } else {
     s.waitlist.push(name);
@@ -432,6 +515,9 @@ app.post('/api/sessions/:date/cancel', async (req, res) => {
   const date = req.params.date;
   const name = (req.body.name || '').trim();
   const fromWaitlist = !!req.body.fromWaitlist;
+  if (isAttendanceFinalized(date)) {
+    return res.status(403).json({ error: `취소 가능 시간이 지났어요 (${CLOSE_HOUR === 12 ? '정오(낮 12시)' : `오후 ${CLOSE_HOUR - 12}시`} 마감).` });
+  }
   const sessions = await storage.getSessions();
   sessions.forEach(ensureSessionShape);
   const s = sessions.find(x => x.date === date);
@@ -464,19 +550,65 @@ app.post('/api/sessions/:date/cancel', async (req, res) => {
   res.json({ ok: true, sessions });
 });
 
-// 월별 참석 통계: 대기(waitlist)는 제외하고, 실제 신청 완료(signups)된 횟수만 이름별로 집계
-app.get('/api/stats', requireAdmin, async (req, res) => {
-  const month = req.query.month; // 'YYYY-MM'
-  if (!/^\d{4}-\d{2}$/.test(month || '')) {
-    return res.status(400).json({ error: '월 형식이 올바르지 않아요 (예: 2026-07).' });
+app.patch('/api/sessions/:date/capacity', requireAdmin, async (req, res) => {
+  const date = req.params.date;
+  const capacity = Number(req.body.capacity);
+  if (isAttendanceFinalized(date)) {
+    return res.status(403).json({ error: '정오 마감으로 출석이 확정된 수업은 정원을 변경할 수 없어요.' });
+  }
+  if (!Number.isInteger(capacity) || capacity < 1 || capacity > MAX_CAPACITY) {
+    return res.status(400).json({ error: `정원은 1명부터 ${MAX_CAPACITY}명까지 정수로 입력해주세요.` });
+  }
+
+  const sessions = await storage.getSessions();
+  sessions.forEach(ensureSessionShape);
+  const session = sessions.find(item => item.date === date);
+  if (!session) return res.status(404).json({ error: '존재하지 않는 세션이에요.' });
+  if (capacity < session.signups.length) {
+    return res.status(409).json({ error: `현재 신청자 ${session.signups.length}명보다 정원을 낮출 수 없어요.` });
+  }
+
+  session.capacity = capacity;
+  const promotedNames = [];
+  while (session.signups.length < capacity && session.waitlist.length > 0) {
+    const promotedName = session.waitlist.shift();
+    session.signups.push(promotedName);
+    promotedNames.push(promotedName);
+  }
+  await storage.saveSessions(sessions);
+  for (const promotedName of promotedNames) {
+    await sendPromotionPush(date, promotedName);
+  }
+  res.json({ ok: true, capacity, promotedNames, sessions });
+});
+
+// 기간별 출석 통계: 정오 마감이 지난 수업의 확정 신청자만 집계한다.
+app.get('/api/stats', async (req, res) => {
+  let { start, end } = req.query;
+  const month = req.query.month;
+  if ((!start || !end) && /^\d{4}-\d{2}$/.test(month || '')) {
+    const [year, monthNumber] = month.split('-').map(Number);
+    start = `${month}-01`;
+    end = `${month}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, '0')}`;
+  }
+  if (!isValidDateString(start) || !isValidDateString(end)) {
+    return res.status(400).json({ error: '시작일과 종료일을 올바르게 선택해주세요.' });
+  }
+  if (start > end) {
+    return res.status(400).json({ error: '시작일은 종료일보다 늦을 수 없어요.' });
+  }
+  const rangeDays = Math.round((kstMidnight(end).getTime() - kstMidnight(start).getTime()) / (24 * 3600 * 1000)) + 1;
+  if (rangeDays > 366) {
+    return res.status(400).json({ error: '조회 기간은 최대 1년(366일)까지 선택할 수 있어요.' });
   }
   const sessions = await storage.getSessions();
   sessions.forEach(ensureSessionShape);
-  const inMonth = sessions.filter(s => s.date.startsWith(month)).sort((a, b) => a.date.localeCompare(b.date));
-  const sessionDates = inMonth.map(s => s.date);
+  const inRange = sessions.filter(s => s.date >= start && s.date <= end).sort((a, b) => a.date.localeCompare(b.date));
+  const finalized = inRange.filter(s => isAttendanceFinalized(s.date));
+  const sessionDates = finalized.map(s => s.date);
 
   const data = {}; // name -> { count, attended: { date: true } }
-  inMonth.forEach(s => {
+  finalized.forEach(s => {
     s.signups.forEach(name => {
       if (!data[name]) data[name] = { count: 0, attended: {} };
       data[name].count += 1;
@@ -487,15 +619,26 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
     .map(([name, v]) => ({ name, count: v.count, attended: v.attended }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ko'));
 
-  res.json({ month, sessionCount: inMonth.length, sessionDates, rows });
+  res.json({
+    start,
+    end,
+    month: month || null,
+    sessionCount: finalized.length,
+    excludedOpenSessionCount: inRange.length - finalized.length,
+    sessionDates,
+    rows
+  });
 });
 
-setInterval(() => {
-  sendClassReminderIfDue().catch(err => {
-    console.error('Class reminder scheduler failed:', err.message || err);
-  });
-}, 60 * 1000);
+if (REMINDER_SCHEDULER_ENABLED) {
+  setInterval(() => {
+    sendClassReminderIfDue().catch(err => {
+      console.error('Class reminder scheduler failed:', err.message || err);
+    });
+  }, 60 * 1000);
+}
 
 app.listen(PORT, () => {
   console.log(`요가동호회 신청 앱이 http://localhost:${PORT} 에서 실행 중입니다.`);
+  console.log(`환경: ${APP_ENV}, 푸시: ${PUSH_ENABLED ? '활성' : '차단'}, 알림 스케줄러: ${REMINDER_SCHEDULER_ENABLED ? '활성' : '차단'}`);
 });
