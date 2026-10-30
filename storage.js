@@ -2,6 +2,20 @@ const fs = require('fs');
 const path = require('path');
 
 const MONGODB_URI = process.env.MONGODB_URI || '';
+const APP_ENV = process.env.APP_ENV || 'production';
+const MONGODB_DB = process.env.MONGODB_DB || 'yoga_signup';
+
+if (!['production', 'staging', 'development', 'test'].includes(APP_ENV)) {
+  throw new Error(`Unsupported APP_ENV: ${APP_ENV}`);
+}
+
+if (MONGODB_URI && APP_ENV === 'staging' && MONGODB_DB !== 'yoga_signup_test') {
+  throw new Error('Staging must use MONGODB_DB=yoga_signup_test. Refusing to connect.');
+}
+
+if (MONGODB_URI && APP_ENV !== 'production' && MONGODB_DB === 'yoga_signup') {
+  throw new Error('Non-production environments cannot use the yoga_signup production database.');
+}
 
 const DEFAULT_CONFIG = { biweeklyFridayRef: null, adminPinHash: null, testMode: false };
 
@@ -16,8 +30,7 @@ if (MONGODB_URI) {
   async function getCollection() {
     if (!collectionPromise) {
       collectionPromise = client.connect().then(() => {
-        const dbName = process.env.MONGODB_DB || 'yoga_signup';
-        return client.db(dbName).collection('appdata');
+        return client.db(MONGODB_DB).collection('appdata');
       });
     }
     return collectionPromise;
@@ -79,3 +92,8 @@ if (MONGODB_URI) {
 }
 
 module.exports = impl;
+module.exports.getDiagnostics = () => ({
+  backend: MONGODB_URI ? 'mongodb' : 'local-file',
+  database: MONGODB_URI ? MONGODB_DB : null,
+  environment: APP_ENV
+});

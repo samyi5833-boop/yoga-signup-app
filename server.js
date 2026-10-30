@@ -7,12 +7,36 @@ const storage = require('./storage');
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_CONFIG = { biweeklyFridayRef: null, adminPinHash: null, testMode: false, autoGenerate: true, skippedDates: [] };
+const APP_ENV = process.env.APP_ENV || 'production';
+const IS_PRODUCTION = APP_ENV === 'production';
+const IS_STAGING = APP_ENV === 'staging';
+const STAGING_USERNAME = process.env.STAGING_USERNAME || '';
+const STAGING_PASSWORD = process.env.STAGING_PASSWORD || '';
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
-const PUSH_ENABLED = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+const PUSH_MODE = process.env.PUSH_MODE || (IS_PRODUCTION ? 'live' : 'disabled');
+const REMINDER_SCHEDULER_REQUESTED = (process.env.REMINDER_SCHEDULER_ENABLED || (IS_PRODUCTION ? 'true' : 'false')) === 'true';
+const PUSH_ENABLED = PUSH_MODE === 'live' && !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+const REMINDER_SCHEDULER_ENABLED = REMINDER_SCHEDULER_REQUESTED && PUSH_ENABLED;
 const CLASS_REMINDER_TYPE = 'classReminder';
 const PROMOTION_PUSH_TYPE = 'promotion';
+
+if (!['production', 'staging', 'development', 'test'].includes(APP_ENV)) {
+  throw new Error(`Unsupported APP_ENV: ${APP_ENV}`);
+}
+if (!['disabled', 'live'].includes(PUSH_MODE)) {
+  throw new Error(`Unsupported PUSH_MODE: ${PUSH_MODE}`);
+}
+if (!IS_PRODUCTION && PUSH_MODE === 'live') {
+  throw new Error('Push delivery can only be enabled in production.');
+}
+if (!IS_PRODUCTION && REMINDER_SCHEDULER_REQUESTED) {
+  throw new Error('The reminder scheduler can only be enabled in production.');
+}
+if (IS_STAGING && (!STAGING_USERNAME || !STAGING_PASSWORD)) {
+  throw new Error('Staging requires STAGING_USERNAME and STAGING_PASSWORD.');
+}
 
 if (PUSH_ENABLED) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -220,8 +244,46 @@ async function sendClassReminderIfDue() {
 
 // ---------- 앱 ----------
 const app = express();
+
+function safeTextEqual(actual, expected) {
+  const actualHash = crypto.createHash('sha256').update(actual || '', 'utf8').digest();
+  const expectedHash = crypto.createHash('sha256').update(expected || '', 'utf8').digest();
+  return crypto.timingSafeEqual(actualHash, expectedHash);
+}
+
+app.use((req, res, next) => {
+  if (!IS_STAGING) return next();
+  const auth = req.headers.authorization || '';
+  const encoded = auth.startsWith('Basic ') ? auth.slice(6) : '';
+  let username = '';
+  let password = '';
+  try {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+    const separator = decoded.indexOf(':');
+    if (separator >= 0) {
+      username = decoded.slice(0, separator);
+      password = decoded.slice(separator + 1);
+    }
+  } catch (err) {
+    // Invalid credentials are handled below.
+  }
+  if (!safeTextEqual(username, STAGING_USERNAME) || !safeTextEqual(password, STAGING_PASSWORD)) {
+    res.set('WWW-Authenticate', 'Basic realm="Yoga staging", charset="UTF-8"');
+    return res.status(401).send('Staging access requires authentication.');
+  }
+  next();
+});
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/environment', (req, res) => {
+  res.json({
+    ...storage.getDiagnostics(),
+    pushMode: PUSH_MODE,
+    pushEnabled: PUSH_ENABLED,
+    reminderSchedulerEnabled: REMINDER_SCHEDULER_ENABLED
+  });
+});
 
 app.get('/api/state', async (req, res) => {
   try {
@@ -239,6 +301,7 @@ app.get('/api/state', async (req, res) => {
         testMode: config.testMode,
         autoGenerate: config.autoGenerate !== false,
         hasPin: !!config.adminPinHash,
+        environment: APP_ENV,
         openHour: OPEN_HOUR,
         closeHour: CLOSE_HOUR
       },
@@ -490,12 +553,15 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
   res.json({ month, sessionCount: inMonth.length, sessionDates, rows });
 });
 
-setInterval(() => {
-  sendClassReminderIfDue().catch(err => {
-    console.error('Class reminder scheduler failed:', err.message || err);
-  });
-}, 60 * 1000);
+if (REMINDER_SCHEDULER_ENABLED) {
+  setInterval(() => {
+    sendClassReminderIfDue().catch(err => {
+      console.error('Class reminder scheduler failed:', err.message || err);
+    });
+  }, 60 * 1000);
+}
 
 app.listen(PORT, () => {
   console.log(`요가동호회 신청 앱이 http://localhost:${PORT} 에서 실행 중입니다.`);
+  console.log(`환경: ${APP_ENV}, 푸시: ${PUSH_ENABLED ? '활성' : '차단'}, 알림 스케줄러: ${REMINDER_SCHEDULER_ENABLED ? '활성' : '차단'}`);
 });

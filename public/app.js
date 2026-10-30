@@ -1,6 +1,6 @@
 const DOW = ['일','월','화','수','목','금','토'];
 let sessions = [];
-let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false, openHour: 9, closeHour: 12 };
+let config = { biweeklyFridayRef: null, testMode: false, autoGenerate: true, hasPin: false, environment: 'production', openHour: 9, closeHour: 12 };
 let showHistory = false;
 let showCandidates = false;
 let settingsOpen = false;
@@ -303,9 +303,14 @@ function renderAdminUI(){
 }
 
 function renderTestBanner(){
-  document.getElementById('testBannerBox').innerHTML = config.testMode
-    ? `<div class="test-banner">🧪 테스트 모드 켜짐 — 9시 잠금이 해제되어 있어요. 실제 운영 전에 꺼주세요.</div>`
-    : '';
+  const banners = [];
+  if(config.environment === 'staging'){
+    banners.push('<div class="test-banner">🧪 STAGING 테스트 사이트 — 운영 데이터와 푸시 알림에 연결되지 않습니다.</div>');
+  }
+  if(config.testMode){
+    banners.push('<div class="test-banner">테스트 모드 켜짐 — 9시 잠금이 해제되어 있어요.</div>');
+  }
+  document.getElementById('testBannerBox').innerHTML = banners.join('');
 }
 
 function renderConnError(){
