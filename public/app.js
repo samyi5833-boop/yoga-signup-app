@@ -57,6 +57,9 @@ function isClosed(dateStr){
 function escapeHtml(str){
   return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
+function capacityFor(session){
+  return Number.isInteger(session.capacity) && session.capacity > 0 ? session.capacity : 14;
+}
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -313,6 +316,26 @@ function renderTestBanner(){
   document.getElementById('testBannerBox').innerHTML = banners.join('');
 }
 
+async function saveSessionCapacity(date, inputEl, errEl){
+  if(!isAdmin) return;
+  errEl.textContent = '';
+  const capacity = Number(inputEl.value);
+  if(!Number.isInteger(capacity) || capacity < 1 || capacity > 100){
+    errEl.textContent = '정원은 1명부터 100명까지 정수로 입력해주세요.';
+    return;
+  }
+  try{
+    const data = await api(`/sessions/${date}/capacity`, {
+      method:'PATCH',
+      body: JSON.stringify({ capacity })
+    });
+    await refreshState();
+    if(data.promotedNames && data.promotedNames.length){
+      alertInline('sessionList', `대기자 ${data.promotedNames.join(', ')}님이 신청자로 승급됐어요.`);
+    }
+  }catch(e){ errEl.textContent = e.message; }
+}
+
 function renderConnError(){
   document.getElementById('connErrorBox').innerHTML = connError
     ? `<div class="conn-error">${connError}</div>` : '';
@@ -377,11 +400,12 @@ function renderCalendar(){
     let countClass = '';
     let countLabel = '';
     if(s){
-      const full = s.signups.length >= 14;
+      const capacity = capacityFor(s);
+      const full = s.signups.length >= capacity;
       const locked = isLocked(dateStr);
       const closed = !locked && isClosed(dateStr);
       countClass = locked ? 'count-locked' : (closed ? 'count-closed' : (full ? 'count-full' : 'count-open'));
-      countLabel = `${s.signups.length}/14`;
+      countLabel = `${s.signups.length}/${capacity}`;
     }
     const isToday = dateStr === today;
     cells += `<div class="cal-cell${s ? ' has-session' : ''}${isToday ? ' today' : ''}" ${s ? `data-cal-date="${dateStr}"` : ''}>
@@ -451,22 +475,25 @@ function renderCandidates(){
 }
 
 function sessionCard(s){
+  const capacity = capacityFor(s);
   const locked = isLocked(s.date);
   const closed = !locked && isClosed(s.date);
-  const full = s.signups.length >= 14;
+  const full = s.signups.length >= capacity;
   let statusLabel, statusClass;
   if(locked){ statusLabel = `오전 ${config.openHour ?? 9}시부터 신청 오픈`; statusClass='locked'; }
   else if(closed){ statusLabel = '신청 마감'; statusClass='closed'; }
   else if(full){ statusLabel = '정원 마감 · 대기 접수 중'; statusClass='full'; }
-  else { statusLabel = `신청 가능 · ${14-s.signups.length}자리 남음`; statusClass='open'; }
+  else { statusLabel = `신청 가능 · ${capacity-s.signups.length}자리 남음`; statusClass='open'; }
 
-  const matsHtml = Array.from({length:14}).map((_,i)=>
+  const matsHtml = Array.from({length:capacity}).map((_,i)=>
     `<div class="mat ${i < s.signups.length ? 'filled' : ''}"></div>`
   ).join('');
 
   const rowHtml = (n, idx, fromWaitlist) => {
     const isPending = pendingCancel && pendingCancel.date===s.date && pendingCancel.name===n && pendingCancel.fromWaitlist===fromWaitlist;
-    const actions = isPending
+    const actions = closed
+      ? ''
+      : isPending
       ? `<button class="confirm-chip yes" data-act="confirm" data-date="${s.date}" data-name="${escapeHtml(n)}" data-wait="${fromWaitlist?1:0}">취소 확정</button>
          <button class="confirm-chip no" data-act="dismiss">아니오</button>`
       : `<button class="cancel-btn" data-act="request" data-date="${s.date}" data-name="${escapeHtml(n)}" data-wait="${fromWaitlist?1:0}">✕</button>`;
@@ -503,6 +530,14 @@ function sessionCard(s){
     : `<p class="push-help">${escapeHtml(pushState.reason)}</p>`;
 
   const isPendingDelete = pendingDeleteSession === s.date;
+  const capacityHtml = isAdmin && !closed
+    ? `<div class="capacity-row">
+        <label for="capacity-${s.date}">회당 최대 인원</label>
+        <input id="capacity-${s.date}" type="number" min="${Math.max(1, s.signups.length)}" max="100" value="${capacity}" data-capacity-input="${s.date}">
+        <button data-capacity-save="${s.date}">저장</button>
+        <span class="field-error" data-capacity-error="${s.date}"></span>
+      </div>`
+    : '';
   const adminDeleteHtml = isAdmin
     ? (isPendingDelete
         ? `<div class="delete-confirm-row">
@@ -521,9 +556,10 @@ function sessionCard(s){
       <div><span class="session-date">${s.date}</span><span class="session-day">${dayLabel(s.date)}요일</span></div>
       <div class="status ${statusClass}">${statusLabel}</div>
     </div>
+    ${capacityHtml}
     ${adminDeleteHtml}
-    <div class="mats">${matsHtml}</div>
-    <div class="list-label">신청 (${s.signups.length}/14)</div>
+    <div class="mats" style="grid-template-columns:repeat(${Math.min(capacity, 20)},1fr)">${matsHtml}</div>
+    <div class="list-label">신청 (${s.signups.length}/${capacity})</div>
     ${signupsHtml}
     ${cancelledHtml}
     ${s.waitlist.length ? `<div class="list-label">대기</div>${waitHtml}` : ''}
@@ -606,6 +642,14 @@ function render(){
   listEl.querySelectorAll('[data-act="delete-dismiss"]').forEach(btn=>{
     btn.addEventListener('click', ()=> { pendingDeleteSession = null; render(); });
   });
+  listEl.querySelectorAll('[data-capacity-save]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const date = btn.dataset.capacitySave;
+      const input = listEl.querySelector(`[data-capacity-input="${date}"]`);
+      const err = listEl.querySelector(`[data-capacity-error="${date}"]`);
+      saveSessionCapacity(date, input, err);
+    });
+  });
 
   document.getElementById('refDate').value = config.biweeklyFridayRef || '';
   document.getElementById('testModeToggle').checked = !!config.testMode;
@@ -674,29 +718,42 @@ document.getElementById('autoGenToggle').addEventListener('change', async (e)=>{
 document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
   if(!isAdmin) return;
   statsOpen = !statsOpen;
-  if(statsOpen && !document.getElementById('statsMonth').value){
-    document.getElementById('statsMonth').value = todayStr().slice(0,7);
+  if(statsOpen && !document.getElementById('statsStart').value){
+    setStatsMonth(0);
   }
   render();
 });
 let lastStatsRows = null;
-let lastStatsMonth = null;
+let lastStatsStart = null;
+let lastStatsEnd = null;
 let lastStatsSessionDates = null;
+function setStatsMonth(offset){
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+  document.getElementById('statsStart').value = fmt(first);
+  document.getElementById('statsEnd').value = fmt(last);
+}
+document.getElementById('statsThisMonthBtn').addEventListener('click', ()=>setStatsMonth(0));
+document.getElementById('statsLastMonthBtn').addEventListener('click', ()=>setStatsMonth(-1));
 document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
   if(!isAdmin) return;
-  const month = document.getElementById('statsMonth').value;
+  const start = document.getElementById('statsStart').value;
+  const end = document.getElementById('statsEnd').value;
   const err = document.getElementById('statsError');
   const resultBox = document.getElementById('statsResult');
   const exportBtn = document.getElementById('statsExportBtn');
   err.textContent = '';
-  if(!month){ err.textContent = '월을 선택해주세요.'; return; }
+  if(!start || !end){ err.textContent = '시작일과 종료일을 모두 선택해주세요.'; return; }
+  if(start > end){ err.textContent = '시작일은 종료일보다 늦을 수 없어요.'; return; }
   try{
-    const data = await api(`/stats?month=${month}`);
+    const data = await api(`/stats?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
     lastStatsRows = data.rows;
-    lastStatsMonth = data.month;
+    lastStatsStart = data.start;
+    lastStatsEnd = data.end;
     lastStatsSessionDates = data.sessionDates;
     if(data.rows.length === 0){
-      resultBox.innerHTML = `<p class="empty-note">${month}에는 참석 기록이 없어요 (수업일 ${data.sessionCount}개).</p>`;
+      resultBox.innerHTML = `<p class="empty-note">선택한 기간에는 확정된 출석 기록이 없어요 (마감 완료 수업 ${data.sessionCount}개).</p>`;
       exportBtn.style.display = 'none';
     } else {
       const dateHeaders = data.sessionDates.map(d=>
@@ -709,7 +766,7 @@ document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
           <td class="stats-total-cell">${r.count}</td>
         </tr>`).join('');
       resultBox.innerHTML = `
-        <p class="help" style="margin-top:10px;">수업일 ${data.sessionCount}개 기준</p>
+        <p class="help" style="margin-top:10px;">${data.start} ~ ${data.end} · 마감 완료 수업 ${data.sessionCount}개 기준${data.excludedOpenSessionCount ? ` · 아직 마감 전 ${data.excludedOpenSessionCount}개 제외` : ''}</p>
         <div class="stats-table-wrap">
           <table class="stats-table">
             <thead><tr><th>이름</th>${dateHeaders}<th>합계</th></tr></thead>
@@ -721,7 +778,7 @@ document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
   }catch(e){ err.textContent = e.message; resultBox.innerHTML=''; exportBtn.style.display='none'; }
 });
 document.getElementById('statsExportBtn').addEventListener('click', ()=>{
-  if(!lastStatsRows || !lastStatsMonth || !lastStatsSessionDates) return;
+  if(!lastStatsRows || !lastStatsStart || !lastStatsEnd || !lastStatsSessionDates) return;
   const escCsv = (v) => `"${String(v).replace(/"/g,'""')}"`;
   const header = ['이름', ...lastStatsSessionDates.map(d=>`${d.slice(5)}(${dayLabel(d)})`), '합계'];
   const lines = [header.map(escCsv).join(',')]
@@ -734,7 +791,7 @@ document.getElementById('statsExportBtn').addEventListener('click', ()=>{
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `참석통계_${lastStatsMonth}.csv`;
+  a.download = `출석통계_${lastStatsStart}_${lastStatsEnd}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
