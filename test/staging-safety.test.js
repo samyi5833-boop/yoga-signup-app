@@ -156,7 +156,7 @@ test('period stats finalize at noon and per-session capacity promotes waitlist s
   const closedCapacity = await request(`/api/sessions/${pastDate}/capacity`, { method: 'PATCH', body: JSON.stringify({ capacity: 20 }) }, admin);
   assert.equal(closedCapacity.status, 403);
 
-  const stats = await request(`/api/stats?start=${pastDate}&end=${pastDate}`, {}, admin);
+  const stats = await request(`/api/stats?start=${pastDate}&end=${pastDate}`);
   assert.equal(stats.status, 200);
   const statsBody = await stats.json();
   assert.equal(statsBody.sessionCount, 1);

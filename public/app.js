@@ -13,6 +13,7 @@ let candidates = [];
 let connError = null;
 let pushState = { supported: false, enabled: false, publicKey: null, reason: '' };
 let calendarMonth = null; // 'YYYY-MM', 초기 렌더 때 오늘 기준으로 채움
+let attendanceKing = null;
 
 function token(){ return localStorage.getItem('yoga_admin_token'); }
 function authHeaders(){
@@ -156,10 +157,22 @@ async function refreshState(){
     sessions = data.sessions;
     config = data.config;
     connError = null;
+    await loadAttendanceKing();
   }catch(e){
     connError = '서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.';
   }
   render();
+}
+
+async function loadAttendanceKing(){
+  const now = new Date();
+  const start = fmt(new Date(now.getFullYear(), now.getMonth(), 1));
+  const end = fmt(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  try{
+    attendanceKing = await api(`/stats?start=${start}&end=${end}`);
+  }catch(e){
+    attendanceKing = { start, end, sessionCount: 0, rows: [], error: true };
+  }
 }
 
 async function loadCandidatesIfNeeded(){
@@ -300,18 +313,38 @@ function renderAdminUI(){
   if(!isAdmin){
     showCandidates = false;
     settingsOpen = false;
-    statsOpen = false;
     document.getElementById('settingsPanel').style.display = 'none';
-    document.getElementById('statsPanel').style.display = 'none';
     document.getElementById('candidatesBox').innerHTML = '';
   } else {
     document.getElementById('settingsPanel').style.display = settingsOpen ? 'block' : 'none';
-    document.getElementById('statsPanel').style.display = statsOpen ? 'block' : 'none';
   }
+  document.getElementById('statsPanel').style.display = statsOpen ? 'block' : 'none';
   document.getElementById('showCandidatesBtn').classList.toggle('active', isAdmin && showCandidates);
   document.getElementById('toggleSettingsBtn').classList.toggle('active', isAdmin && settingsOpen);
-  document.getElementById('toggleStatsBtn').classList.toggle('active', isAdmin && statsOpen);
+  document.getElementById('toggleStatsBtn').classList.toggle('active', statsOpen);
   renderLoginBox();
+}
+
+function renderAttendanceKing(){
+  const box = document.getElementById('attendanceKingBox');
+  if(!attendanceKing || attendanceKing.error){ box.innerHTML = ''; return; }
+  if(attendanceKing.rows.length === 0){
+    box.innerHTML = `<div class="attendance-king">
+      <div class="king-icon">🏆</div>
+      <div><strong>이달의 출석왕</strong><p>아직 정오 마감이 끝난 출석 기록이 없어요.</p></div>
+    </div>`;
+    return;
+  }
+  const topCount = attendanceKing.rows[0].count;
+  const leaders = attendanceKing.rows.filter(row => row.count === topCount);
+  box.innerHTML = `<div class="attendance-king">
+    <div class="king-icon">🏆</div>
+    <div>
+      <strong>이달의 출석왕</strong>
+      <div class="king-names">${leaders.map(row => `<span>${escapeHtml(row.name)}</span>`).join('')}</div>
+      <p>${topCount}회 출석 · 정오 마감 완료 수업 기준${leaders.length > 1 ? ' · 공동 1위' : ''}</p>
+    </div>
+  </div>`;
 }
 
 function renderTestBanner(){
@@ -590,6 +623,7 @@ function render(){
   renderConnError();
   renderReminderBox();
   renderCalendar();
+  renderAttendanceKing();
   renderAdminUI();
   renderTestBanner();
   renderCandidates();
@@ -731,7 +765,6 @@ document.getElementById('autoGenToggle').addEventListener('change', async (e)=>{
   }catch(err){ e.target.checked = !e.target.checked; }
 });
 document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
-  if(!isAdmin) return;
   statsOpen = !statsOpen;
   showCandidates = false;
   settingsOpen = false;
@@ -754,7 +787,6 @@ function setStatsMonth(offset){
 document.getElementById('statsThisMonthBtn').addEventListener('click', ()=>setStatsMonth(0));
 document.getElementById('statsLastMonthBtn').addEventListener('click', ()=>setStatsMonth(-1));
 document.getElementById('statsLoadBtn').addEventListener('click', async ()=>{
-  if(!isAdmin) return;
   const start = document.getElementById('statsStart').value;
   const end = document.getElementById('statsEnd').value;
   const err = document.getElementById('statsError');

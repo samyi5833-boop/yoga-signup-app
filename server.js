@@ -583,7 +583,7 @@ app.patch('/api/sessions/:date/capacity', requireAdmin, async (req, res) => {
 });
 
 // 기간별 출석 통계: 정오 마감이 지난 수업의 확정 신청자만 집계한다.
-app.get('/api/stats', requireAdmin, async (req, res) => {
+app.get('/api/stats', async (req, res) => {
   let { start, end } = req.query;
   const month = req.query.month;
   if ((!start || !end) && /^\d{4}-\d{2}$/.test(month || '')) {
