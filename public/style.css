@@ -83,7 +83,7 @@ h1{
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
   gap:5px;
-  margin:0 0 18px;
+  margin:0 0 12px;
   padding:5px;
   border:1px solid rgba(221,220,207,.9);
   border-radius:18px;
@@ -194,11 +194,11 @@ h1{
 .wellness-hero{
   position:relative;
   overflow:hidden;
-  margin:0 -16px 20px;
-  padding:26px 26px 76px;
+  margin:0 -16px 12px;
+  padding:18px 24px 24px;
   color:#F9FBF8;
   background:linear-gradient(145deg,#648176 0%,#4C6C5F 100%);
-  border-radius:0 0 32px 32px;
+  border-radius:0 0 24px 24px;
 }
 .wellness-hero::before,.wellness-hero::after{content:'';position:absolute;border-radius:50%;pointer-events:none;}
 .wellness-hero::before{width:190px;height:190px;right:-76px;bottom:-86px;background:rgba(239,218,177,.25);}
@@ -207,10 +207,11 @@ h1{
 .hero-symbol{display:grid;place-items:center;width:30px;height:30px;border:1px solid rgba(255,255,255,.3);border-radius:50%;font-size:20px;letter-spacing:0;}
 .wellness-hero h1{position:relative;z-index:1;color:#FFF;}
 .wellness-hero h1 span{color:#F0DEB9;}
-.hero-rule{position:relative;z-index:1;margin:18px 0 0;font-size:11.5px;color:rgba(255,255,255,.7);}
+.wellness-hero h1{font-size:25px;line-height:1.25;margin:12px 0 4px;}
+.wellness-hero .sub{font-size:12.5px;line-height:1.45;}
+.hero-rule{position:relative;z-index:1;margin:8px 0 0;font-size:10.5px;color:rgba(255,255,255,.7);}
 #connErrorBox,#reminderBox{position:relative;z-index:3;}
-#reminderBox{margin-top:-52px;}
-.reminder-panel{border:1px solid rgba(255,255,255,.65);border-radius:19px;padding:15px 16px;background:rgba(255,254,248,.97);box-shadow:0 12px 34px rgba(55,70,61,.13);}
+.reminder-panel{border:1px solid rgba(255,255,255,.65);border-radius:16px;padding:11px 14px;background:rgba(255,254,248,.97);box-shadow:0 8px 22px rgba(55,70,61,.08);margin-bottom:12px;}
 .reminder-panel strong{font-size:14px;color:var(--ink);}
 .reminder-panel button{border-radius:12px;padding:9px 14px;background:var(--accent);}
 .calendar-panel{padding:18px;border:0;border-radius:22px;margin-bottom:16px;background:var(--surface);box-shadow:0 10px 32px rgba(63,74,65,.08);}
@@ -236,7 +237,7 @@ h1{
 .public-actions{margin-bottom:10px;}
 .chip-btn{border:1px solid var(--line);border-radius:999px;padding:9px 14px;background:rgba(255,254,248,.8);font-family:'Noto Sans KR',sans-serif;color:var(--ink);}
 .chip-btn.active{background:var(--accent);border-color:var(--accent);color:#FFF;}
-.test-banner{border:1px solid #DFC7A9;border-radius:13px;background:#F8ECDD;color:#9D6043;}
+.test-banner{border:1px solid #DFC7A9;border-radius:11px;background:#F8ECDD;color:#9D6043;padding:7px 12px;margin-bottom:10px;}
 .card{border:0;border-radius:22px;padding:20px;margin-bottom:16px;background:var(--surface);box-shadow:0 9px 28px rgba(63,74,65,.075);}
 .session-head{align-items:center;margin-bottom:16px;}
 .session-date{font-family:'Noto Serif KR',serif;font-weight:600;font-size:18px;}
@@ -268,9 +269,9 @@ h1{
 
 @media (max-width:520px){
   body{padding-left:12px;padding-right:12px;}
-  .wellness-hero{margin-left:-12px;margin-right:-12px;padding:23px 22px 72px;border-radius:0 0 26px 26px;}
-  .wellness-hero h1{font-size:29px;}
-  .hero-rule{font-size:10.5px;line-height:1.6;}
+  .wellness-hero{margin-left:-12px;margin-right:-12px;padding:16px 20px 20px;border-radius:0 0 22px 22px;}
+  .wellness-hero h1{font-size:23px;margin-top:10px;}
+  .hero-rule{font-size:10px;line-height:1.5;}
   .app-nav{gap:4px;padding:4px;border-radius:16px;}
   .app-nav-btn{padding:10px 4px;font-size:12px;}
   .calendar-panel{padding:15px 12px;}
