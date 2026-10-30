@@ -290,6 +290,7 @@ function renderAdminUI(){
   document.getElementById('adminLogoutBtn').style.display = isAdmin ? 'inline-block' : 'none';
   document.getElementById('adminStatus').textContent = isAdmin ? '관리자 모드' : '일반 회원 모드';
   if(!isAdmin){
+    showCandidates = false;
     settingsOpen = false;
     statsOpen = false;
     document.getElementById('settingsPanel').style.display = 'none';
@@ -665,17 +666,23 @@ document.getElementById('adminLogoutBtn').addEventListener('click', ()=>{
   isAdmin = false;
   localStorage.removeItem('yoga_admin_token');
   showCandidates = false;
+  settingsOpen = false;
+  statsOpen = false;
   render();
 });
 document.getElementById('showCandidatesBtn').addEventListener('click', async ()=>{
   if(!isAdmin) return;
   showCandidates = !showCandidates;
+  settingsOpen = false;
+  statsOpen = false;
   await loadCandidatesIfNeeded();
   render();
 });
 document.getElementById('toggleSettingsBtn').addEventListener('click', ()=>{
   if(!isAdmin) return;
   settingsOpen = !settingsOpen;
+  showCandidates = false;
+  statsOpen = false;
   render();
 });
 document.getElementById('saveRefBtn').addEventListener('click', async ()=>{
@@ -718,6 +725,8 @@ document.getElementById('autoGenToggle').addEventListener('change', async (e)=>{
 document.getElementById('toggleStatsBtn').addEventListener('click', ()=>{
   if(!isAdmin) return;
   statsOpen = !statsOpen;
+  showCandidates = false;
+  settingsOpen = false;
   if(statsOpen && !document.getElementById('statsStart').value){
     setStatsMonth(0);
   }
